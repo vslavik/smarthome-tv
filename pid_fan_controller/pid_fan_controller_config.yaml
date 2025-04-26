@@ -1,0 +1,68 @@
+# PID sample interval in seconds
+sample_interval: 0.5
+heat_pressure_srcs:
+  - name: CPU
+    wildcard_path: /sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon*/temp1_input
+    PID_params:
+      set_point: 62
+      P: -0.005
+      I: -0.005
+      D: -0.006
+
+  - name: GPU
+    # instead of a file to read temperature from, you can get it from a command
+    # if wildcard_path & temp_cmd are both present, temp_cmd will take priority
+    temp_cmd: nvidia-smi -q -d temperature | grep "GPU Current" | awk '{print $5}'
+    PID_params:
+      set_point: 73
+      P: -0.03
+      I: -0.002
+      D: -0.0005
+
+fans:
+  - name: aio
+    wildcard_path: /sys/devices/platform/nct6775.2592/hwmon/hwmon*/pwm1
+    pwm_modes:
+      manual: 1
+      auto: 5
+      pwm_mode_wildcard_path: /sys/devices/platform/nct6775.2592/hwmon/hwmon*/pwm1_enable
+    min_pwm: 60
+    max_pwm: 255
+    # max(heat_pressure_srcs)
+    # src names must be from the `name` in heat_pressure_srcs
+    heat_pressure_srcs:
+      - CPU
+      - GPU
+  - name: exhaust_top_back
+    wildcard_path: /sys/devices/platform/nct6775.2592/hwmon/hwmon*/pwm2
+    pwm_modes:
+      manual: 1
+      auto: 5
+      pwm_mode_wildcard_path: /sys/devices/platform/nct6775.2592/hwmon/hwmon*/pwm2_enable
+    min_pwm: 50
+    max_pwm: 180
+    heat_pressure_srcs:
+      - CPU
+      - GPU
+  - name: aio_exhaust
+    wildcard_path: /sys/devices/platform/nct6775.2592/hwmon/hwmon*/pwm5
+    pwm_modes:
+      manual: 1
+      auto: 5
+      pwm_mode_wildcard_path: /sys/devices/platform/nct6775.2592/hwmon/hwmon*/pwm5_enable
+    min_pwm: 50
+    max_pwm: 250
+    heat_pressure_srcs:
+      - CPU
+      - GPU
+  - name: exhaust_back
+    wildcard_path: /sys/devices/platform/nct6775.2592/hwmon/hwmon*/pwm3
+    pwm_modes:
+      manual: 1
+      auto: 5
+      pwm_mode_wildcard_path: /sys/devices/platform/nct6775.2592/hwmon/hwmon*/pwm3_enable
+    min_pwm: 80
+    max_pwm: 180
+    heat_pressure_srcs:
+      - CPU
+      - GPU
