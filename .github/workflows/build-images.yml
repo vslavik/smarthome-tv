@@ -8,6 +8,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository }}
+  NAME_PREFIX: smarthome-tv
 
 jobs:
   build-docker-image:
@@ -58,3 +59,13 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Delete old Docker images
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: ${{ env.NAME_PREFIX }}-${{ matrix.service }}
+          package-type: 'container'
+          min-versions-to-keep: 5
+          delete-only-untagged-versions: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
