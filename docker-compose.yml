@@ -1,0 +1,17 @@
+
+name: tvaux
+
+services:
+  fan-controller:
+    build:
+      context: fan-controller
+    restart: unless-stopped
+    # for access to /sys
+    privileged: true
+    volumes:
+      - config:/config
+    environment:
+      - CONFIG_FILE=/config/fan-controller.yaml
+
+volumes:
+  config:
