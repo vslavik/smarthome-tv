@@ -1,0 +1,10 @@
+[project]
+name = "fan-controller"
+version = "0.1.0"
+description = "PID-based fan controller for Raspberry Pi"
+readme = "README"
+requires-python = ">=3.9"
+dependencies = [
+    "pyyaml>=6.0.2",
+    "simple-pid>=2.0.1",
+]
