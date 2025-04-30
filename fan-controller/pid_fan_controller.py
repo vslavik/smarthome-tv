@@ -20,7 +20,10 @@ class PwmFan:
         maxPwm
         """
         assert percentage >= 0.0 and percentage <= 1.0
-        pwm = self.minPwm + self.range * percentage
+        if percentage == 0.0:
+            pwm = 0
+        else:
+            pwm = self.minPwm + self.range * percentage
         if dry_run:
             print(self.devPath, int(pwm))
         else:
