@@ -3,7 +3,7 @@ from simple_pid import PID
 import time, glob, yaml, subprocess
 
 class PwmFan:
-    def __init__(self, name, devPath, minPwm, maxPwm, press_srcs):
+    def __init__(self, name, devPath, minPwm, maxPwm, maxAirflow, press_srcs):
         assert minPwm < maxPwm
         assert minPwm >= 0 and minPwm <= 255
         assert maxPwm >= 0 and maxPwm <= 255
@@ -12,7 +12,28 @@ class PwmFan:
         self.minPwm = minPwm
         self.maxPwm = maxPwm
         self.range = self.maxPwm - self.minPwm
+        self.max_airflow = maxAirflow  # in m3/h
         self.press_srcs = press_srcs
+        self._current_pwm = 0
+
+    @property
+    def current_airflow(self):
+        return self._current_pwm * self.max_airflow / self.maxPwm
+
+    def set_pwm(self, pwm, dry_run=False):
+        """
+        set fan speed in PWM value (0-255)
+        """
+        if pwm > self.maxPwm:
+            pwm = self.maxPwm
+        elif pwm < max(0, self.minPwm):
+            pwm = 0
+        self._current_pwm = pwm
+        if dry_run:
+            print(self.devPath, pwm)
+        else:
+            with open(self.devPath, 'w') as f:
+                f.write(str(pwm))
 
     def set_speed(self, percentage, dry_run=False):
         """
@@ -24,14 +45,45 @@ class PwmFan:
             pwm = 0
         else:
             pwm = self.minPwm + self.range * percentage
-        if dry_run:
-            print(self.devPath, int(pwm))
-        else:
-            with open(self.devPath, 'w') as f:
-                f.write(str(int(pwm)))
+        self.set_pwm(int(pwm), dry_run=dry_run)
+
+    def set_airflow(self, airflow, dry_run=False):
+        """
+        set fan speed based on desired airflow in m3/h
+        """
+        airflow = max(0, min(airflow, self.max_airflow))
+        if airflow == 0:
+            self.set_pwm(0, dry_run=dry_run)
+            return
+        pwm = int((airflow / self.max_airflow) * self.maxPwm)
+        # if setting non-zero airflow explicitly, always have at least some airflow
+        if pwm < self.minPwm:
+            pwm = self.minPwm
+        self.set_pwm(pwm, dry_run=dry_run)
+
 
     def get_pressure_srcs(self):
         return self.press_srcs
+
+class BalancingPwmFan(PwmFan):
+    """
+    A fan that balances airflow based on other fans' airflow.
+    """
+    def __init__(self, name, devPath, minPwm, maxPwm, max_airflow, correction_factor):
+        super().__init__(name, devPath, minPwm, maxPwm, max_airflow, [])
+        self.correction_factor = correction_factor
+
+    def update_speed(self, other_fans, dry_run=False):
+        """
+        Update the fan speed based on the average airflow of the other fans.
+        """
+        other_airflow = sum(fan.current_airflow for fan in other_fans)
+        my_speed = (other_airflow / self.max_airflow) * self.correction_factor * self.maxPwm
+        # if setting non-zero airflow explicitly, always have at least some airflow
+        if my_speed > 0 and my_speed < self.minPwm:
+            my_speed = self.minPwm
+        self.set_pwm(int(my_speed), dry_run=dry_run)
+
 
 class TempSensor:
     def __init__(self, devPath):
@@ -92,15 +144,19 @@ def get_only_one_wildcard_match(wc_path):
     assert len(should_be_a_single_path) == 1
     return should_be_a_single_path[0]
 
-def instantiate_fan(cfg):
+def instantiate_fan(cfg, balancing=False):
     name = cfg['name']
     wc_path = cfg['wildcard_path']
+    path = get_only_one_wildcard_match(wc_path)
     min_pwm = cfg['min_pwm']
     max_pwm = cfg['max_pwm']
-    press_srcs = cfg['heat_pressure_srcs']
-    path = get_only_one_wildcard_match(wc_path)
-
-    return PwmFan(name, path, min_pwm, max_pwm, press_srcs)
+    max_airflow = cfg['max_airflow']
+    if balancing:
+        correction_factor = cfg.get('correction_factor', 1.0)
+        return BalancingPwmFan(name, path, min_pwm, max_pwm, max_airflow, correction_factor)
+    else:
+        press_srcs = cfg['heat_pressure_srcs']
+        return PwmFan(name, path, min_pwm, max_pwm, max_airflow, press_srcs)
 
 def instantiate_hp_src(cfg, sample_interval):
     name = cfg['name']
@@ -134,6 +190,7 @@ class PID_fan_controller:
         self.sample_interval = self.config['sample_interval']
         self.heat_pressure_srcs = [ instantiate_hp_src(hp_cfg, self.sample_interval) for hp_cfg in self.config["heat_pressure_srcs"] ]
         self.fans = [ instantiate_fan(fan_config) for fan_config in self.config["fans"] ]
+        self.balancing_fan = instantiate_fan(self.config.get("balancing_fan"), balancing=True)
 
     def run_loop(self, dry_run=False):
         while True:
@@ -148,6 +205,9 @@ class PID_fan_controller:
                 hp = [ heat_pressures[hp_src] for hp_src in press_srcs ]
                 highest_pressure = max(hp)
                 fan.set_speed(highest_pressure, dry_run)
+
+            if self.balancing_fan:
+                self.balancing_fan.update_speed(self.fans, dry_run)
 
             time.sleep(self.sample_interval)
 

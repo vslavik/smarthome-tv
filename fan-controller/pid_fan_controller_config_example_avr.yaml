@@ -1,5 +1,5 @@
 # PID sample interval in seconds
-sample_interval: 2
+sample_interval: 5
 heat_pressure_srcs:
   - name: AVReceiver
     wildcard_path: /sys/class/hwmon/hwmon1/temp2_input
@@ -8,8 +8,6 @@ heat_pressure_srcs:
       P: -0.02
       I: -0.001
       D: -0.003
-
-
   - name: PlayStation
     wildcard_path: /sys/class/hwmon/hwmon1/temp1_input
     PID_params:
@@ -19,7 +17,7 @@ heat_pressure_srcs:
       D: -0.003
 
 fans:
-  - name: ps_bottom
+  - name: ps
     wildcard_path: /sys/class/hwmon/hwmon1/pwm1
     pwm_modes:
       manual: 1
@@ -27,19 +25,10 @@ fans:
       pwm_mode_wildcard_path: /dev/null
     min_pwm: 25
     max_pwm: 255
+    max_airflow: 280
     heat_pressure_srcs:
       - PlayStation
-  - name: ps_top
-    wildcard_path: /sys/class/hwmon/hwmon1/pwm3
-    pwm_modes:
-      manual: 1
-      auto: 5
-      pwm_mode_wildcard_path: /dev/null
-    min_pwm: 25
-    max_pwm: 255
-    heat_pressure_srcs:
-      - PlayStation
-  - name: avr_bottom
+  - name: avr
     wildcard_path: /sys/class/hwmon/hwmon1/pwm2
     pwm_modes:
       manual: 1
@@ -47,16 +36,20 @@ fans:
       pwm_mode_wildcard_path: /dev/null
     min_pwm: 25
     max_pwm: 255
-    heat_pressure_srcs:
-      - AVReceiver
-  - name: avr_top
-    wildcard_path: /sys/class/hwmon/hwmon1/pwm4
-    pwm_modes:
-      manual: 1
-      auto: 5
-      pwm_mode_wildcard_path: /dev/null
-    min_pwm: 25
-    max_pwm: 255
+    max_airflow: 280
     heat_pressure_srcs:
       - AVReceiver
 
+# This is the fan that balances intake/exhaust of the other fans:
+balancing_fan:
+  name: wall_fan
+  wildcard_path: /sys/class/hwmon/hwmon0/pwm1
+  pwm_modes:
+    manual: 1
+    auto: 5
+    pwm_mode_wildcard_path: /dev/null
+  min_pwm: 25
+  max_pwm: 255
+  max_airflow: 420
+  # run 10% faster to hopefully get negative pressure inside the wall
+  correction_factor: 1.1
