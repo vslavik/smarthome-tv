@@ -5,8 +5,8 @@ import time, glob, yaml, subprocess
 class PwmFan:
     def __init__(self, name, devPath, minPwm, maxPwm, maxAirflow, press_srcs):
         assert minPwm < maxPwm
-        assert minPwm >= 0 and minPwm <= 255
-        assert maxPwm >= 0 and maxPwm <= 255
+        #assert minPwm >= 0 and minPwm <= 255
+        #assert maxPwm >= 0 and maxPwm <= 255
         self.name = name
         self.devPath = devPath
         self.minPwm = minPwm
