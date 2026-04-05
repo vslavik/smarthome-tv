@@ -1,5 +1,4 @@
-
-FROM ghcr.io/astral-sh/uv:python3.13-alpine AS builder
+FROM ghcr.io/astral-sh/uv:python3.14-alpine AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV UV_COMPILE_BYTECODE=1 \
@@ -14,7 +13,7 @@ RUN uv sync --locked --no-dev --no-install-project
 # Now install the application itself, w/o dependencies.
 COPY *.py /app/
 
-FROM python:3.13-alpine
+FROM python:3.14-alpine
 WORKDIR /app
 COPY --from=builder /app /app
 
