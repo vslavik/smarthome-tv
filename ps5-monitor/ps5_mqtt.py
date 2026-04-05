@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+
+import json
+import logging
+import os
+from queue import Empty, SimpleQueue
+import signal
+import time
+from dataclasses import dataclass
+
+import paho.mqtt.client as mqtt
+
+from ps5_probe import probe
+
+
+MQTT_PORT = 1883
+
+MQTT_KEEPALIVE = 30
+POLL_INTERVAL = 1.0
+PROBE_TIMEOUT = 0.5
+OFF_DELAY = 5.0
+IDLE_SLEEP = 0.2
+
+MQTT_STATE_TOPIC     = "tvaux/ps5/ddp/state"
+MQTT_COMMAND_TOPIC   = "tvaux/ps5/ddp/command"
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+
+
+def required_env(name):
+    value = os.getenv(name)
+    if value:
+        return value
+    raise SystemExit(f"{name} is required")
+
+
+@dataclass
+class BridgeState:
+    paused: bool = False
+    published_state: str | None = None
+    missing_since: float | None = None
+    next_probe_at: float = 0.0
+    stopped: bool = False
+
+
+class Ps5MqttBridge:
+    def __init__(self, ps5_host, mqtt_host):
+        self.ps5_host = ps5_host
+        self.state = BridgeState()
+        self.commands = SimpleQueue()
+        self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+        self.client.on_connect = self.on_connect
+        self.client.on_message = self.on_message
+        self.client.connect(mqtt_host, MQTT_PORT, keepalive=MQTT_KEEPALIVE)
+
+    def on_connect(self, client, userdata, flags, reason_code, properties=None):
+        client.subscribe(MQTT_COMMAND_TOPIC, qos=1)
+
+    def on_message(self, client, userdata, msg):
+        command = msg.payload.decode("utf-8", "replace").strip().lower()
+        self.commands.put(command)
+
+    def handle_command(self, command):
+        if command == "stop":
+            self.state.paused = True
+            self.state.missing_since = None
+            logging.info("received command stop")
+        elif command == "start":
+            self.state.paused = False
+            self.state.missing_since = None
+            self.state.next_probe_at = 0.0
+            logging.info("received command start")
+        else:
+            logging.warning("ignoring unknown command %r", command)
+
+    def publish_state(self, state, details):
+        previous = self.state.published_state
+        self.client.publish(MQTT_STATE_TOPIC, json.dumps(details), qos=1, retain=True)
+        self.state.published_state = state
+        logging.info("state %s -> %s", previous, state)
+
+    def handle_probe_result(self, result):
+        now = time.monotonic()
+
+        if result["code"] is None:
+            if self.state.missing_since is None:
+                self.state.missing_since = now
+            if self.state.published_state != "off" and now - self.state.missing_since >= OFF_DELAY:
+                self.publish_state("off", result)
+            return
+
+        self.state.missing_since = None
+        if result["state"] != self.state.published_state:
+            self.publish_state(result["state"], result)
+
+    def run(self):
+        self.client.loop_start()
+        signal.signal(signal.SIGINT, self.stop)
+        signal.signal(signal.SIGTERM, self.stop)
+        logging.info("starting bridge for PS5 %s", self.ps5_host)
+
+        try:
+            while not self.state.stopped:
+                try:
+                    while True:
+                        command = self.commands.get_nowait()
+                        self.handle_command(command)
+                except Empty:
+                    pass
+
+                if self.state.paused:
+                    time.sleep(IDLE_SLEEP)
+                    continue
+
+                now = time.monotonic()
+                if now < self.state.next_probe_at:
+                    time.sleep(min(IDLE_SLEEP, self.state.next_probe_at - now))
+                    continue
+
+                try:
+                    result = probe(self.ps5_host, timeout=PROBE_TIMEOUT, tries=1)
+                    self.state.next_probe_at = time.monotonic() + POLL_INTERVAL
+                    self.handle_probe_result(result)
+                except ValueError as e:
+                    logging.error("failed probe: %s", e)
+        finally:
+            self.client.loop_stop()
+            self.client.disconnect()
+
+    def stop(self, *_args):
+        self.state.stopped = True
+        logging.info("stopping bridge")
+
+
+def main():
+    bridge = Ps5MqttBridge(
+        ps5_host=required_env("PS5_HOST"),
+        mqtt_host=required_env("MQTT_HOST"),
+    )
+    bridge.run()
+
+
+if __name__ == "__main__":
+    main()

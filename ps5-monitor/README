@@ -1,0 +1,5 @@
+
+Monitors PlayStation 5 over network to observe its on/off/standby status.
+
+See https://github.com/iharosi/ps5-wake for the original protocol reverse engineering.
+

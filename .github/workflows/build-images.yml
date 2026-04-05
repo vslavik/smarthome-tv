@@ -18,6 +18,7 @@ jobs:
       matrix:
         include:
           - service: fan-controller
+          - service: ps5-monitor
     permissions:
       contents: read
       packages: write

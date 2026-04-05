@@ -13,5 +13,13 @@ services:
     environment:
       - CONFIG_FILE=/config/fan-controller.yaml
 
+  ps5-monitor:
+    build:
+      context: ps5-monitor
+    restart: unless-stopped
+    environment:
+      - PS5_HOST=xxx
+      - MQTT_HOST=xxx
+
 volumes:
   config:
