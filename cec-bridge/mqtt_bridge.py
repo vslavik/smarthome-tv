@@ -2,156 +2,115 @@
 
 from __future__ import annotations
 
-import re
 import signal
-import sys
 import time
 
 import cec
+import msgspec
 
 
-# Adjust these.
-TV = cec.CECDEVICE_TV
-
-WATCHED = {
-    cec.CECDEVICE_PLAYBACKDEVICE2,  # 0x8 = PS5
-    cec.CECDEVICE_PLAYBACKDEVICE3,  # 0xB = SHIELD
-}
-
-DEVICE_NAMES = {
-    cec.CECDEVICE_TV: 'tv',
-    cec.CECDEVICE_PLAYBACKDEVICE2: 'ps5',
-    cec.CECDEVICE_PLAYBACKDEVICE3: 'shield',
-}
-
-# In-memory state only.
-is_on = {addr: False for addr in WATCHED}
-
-# Optional: avoid repeated standby spam if multiple events arrive.
-last_tv_off_at = 0.0
-TV_OFF_DEBOUNCE_SEC = 2.0
-
-lib = None
+class CECMessage(msgspec.Struct, frozen=True):
+    """A message on the CEC bus"""
+    raw: str
+    source: int
+    destination: int
+    opcode: int | None = None
+    parameters: tuple[int, ...] = ()
 
 
-def all_watched_off() -> bool:
-    return all(not is_on[addr] for addr in WATCHED)
-
-
-def maybe_turn_off_tv() -> None:
-    global last_tv_off_at
-
-    if not all_watched_off():
-        return
-
-    now = time.monotonic()
-    if now - last_tv_off_at < TV_OFF_DEBOUNCE_SEC:
-        return
-
-    print('all watched devices off -> TV standby', flush=True)
-    lib.StandbyDevices(TV)
-    last_tv_off_at = now
-
-
-def parse_addr(cmd: str) -> int | None:
-    # libCEC callback string is typically hex-ish like "4f:36" / "0f:82:10:00".
-    m = re.match(r'^([0-9a-fA-F])([0-9a-fA-F]):', cmd)
-    if not m:
-        return None
-    src = int(m.group(1), 16)
-    return src if src in WATCHED else None
-
-
-def parse_command(cmd):
-    s = str(cmd).strip()
-
-    # Remove libCEC direction prefix if present.
-    if s.startswith('>> '):
-        s = s[3:]
-    elif s.startswith('<< '):
-        s = s[3:]
-
-    parts = s.split(':')
-    if len(parts) < 2 or len(parts[0]) != 2:
+def parse_command(raw_command: str) -> CECMessage | None:
+    parts = raw_command.split(':')
+    if not parts or len(parts[0]) != 2:
         return None
 
-    src = int(parts[0][0], 16)
-    dst = int(parts[0][1], 16)
-    opcode = int(parts[1], 16) if len(parts) >= 2 else None
-    args = [int(x, 16) for x in parts[2:]]
+    if any(len(part) != 2 for part in parts[1:] if part):
+        return None
 
-    return src, dst, opcode, args, s
+    try:
+        source = int(parts[0][0], 16)
+        destination = int(parts[0][1], 16)
+        opcode = int(parts[1], 16) if len(parts) >= 2 and parts[1] else None
+        parameters = tuple(int(part, 16) for part in parts[2:])
+    except ValueError:
+        return None
 
+    return CECMessage(
+        raw=raw_command,
+        source=source,
+        destination=destination,
+        opcode=opcode,
+        parameters=parameters,
+    )
+class CECClient:
+    def __init__(self) -> None:
+        self.config: cec.libcec_configuration | None = None
+        self.command_callback = self.handle_command
+        self.lib: cec.ICECAdapter | None = None
+        self.running = False
 
-def handle_command(cmd) -> int:
-    parsed = parse_command(cmd)
-    if parsed is None:
+    def init(self) -> None:
+        self.config = cec.libcec_configuration()
+        self.config.strDeviceName = 'TVAUX'
+        self.config.bActivateSource = 0
+        self.config.clientVersion = cec.LIBCEC_VERSION_CURRENT
+        self.config.deviceTypes.Add(cec.CEC_DEVICE_TYPE_RECORDING_DEVICE)
+        self.config.SetCommandCallback(self.command_callback)
+        self.lib = cec.ICECAdapter.Create(self.config)
+
+        adapters = self.lib.DetectAdapters()
+        if not adapters:
+            raise RuntimeError('No CEC adapters found')
+
+        port = adapters[0].strComName
+        if not self.lib.Open(port):
+            raise RuntimeError(f'Failed to open {port}')
+
+        print(f'opened {port}', flush=True)
+
+    def handle_command(self, cmd) -> int:
+        raw = str(cmd).strip()
+        if not raw.startswith('>> '):
+            return 0
+
+        message = parse_command(raw[3:])
+        if message is None:
+            return 0
+
+        opcode = '--' if message.opcode is None else f'{message.opcode:02x}'
+        print(
+            f'dbg src={message.source:x} dst={message.destination:x} opcode={opcode} '
+            f'args={message.parameters} raw="{message.raw}"',
+            flush=True,
+        )
+
         return 0
 
-    src, dst, opcode, args, raw = parsed
-    print(f'dbg src={src:x} dst={dst:x} opcode={opcode:02x} args={args} raw="{raw}"', flush=True)
+    def close(self) -> None:
+        if self.lib is not None:
+            self.lib.Close()
 
-    if src not in WATCHED:
-        return 0
+    def stop(self, _sig=None, _frame=None) -> None:
+        self.running = False
+        self.close()
 
-    changed = False
+    def run(self) -> None:
+        print('observing...', flush=True)
 
-    if opcode == 0x36:  # Standby
-        if is_on[src]:
-            is_on[src] = False
-            changed = True
-
-    elif opcode in {0x82, 0x04, 0x0D}:  # Active Source / Image View On / Text View On
-        if not is_on[src]:
-            is_on[src] = True
-            changed = True
-
-    if changed:
-        print(f'{DEVICE_NAMES.get(src, src)} -> {"on" if is_on[src] else "off"} ({raw})', flush=True)
-        maybe_turn_off_tv()
-
-    return 0
-
-
-def open_adapter():
-    adapters = lib.DetectAdapters()
-    if not adapters:
-        raise RuntimeError('No CEC adapters found')
-
-    port = adapters[0].strComName
-    if not lib.Open(port):
-        raise RuntimeError(f'Failed to open {port}')
-
-    print(f'opened {port}', flush=True)
+        self.running = True
+        while self.running:
+            time.sleep(3600)
 
 
 def main() -> int:
-    global lib
-
-    config = cec.libcec_configuration()
-    config.strDeviceName = 'TVAUX'
-    config.bActivateSource = 0
-    config.clientVersion = cec.LIBCEC_VERSION_CURRENT
-    config.deviceTypes.Add(cec.CEC_DEVICE_TYPE_RECORDING_DEVICE)
-    config.SetCommandCallback(handle_command)
-
-    lib = cec.ICECAdapter.Create(config)
-    open_adapter()
-
-    print('observing...', flush=True)
-
-    def stop(_sig, _frame):
-        try:
-            lib.Close()
-        finally:
-            sys.exit(0)
-
-    signal.signal(signal.SIGINT, stop)
-    signal.signal(signal.SIGTERM, stop)
-
-    while True:
-        time.sleep(3600)
-
+    client = CECClient()
+    try:
+        signal.signal(signal.SIGINT, client.stop)
+        signal.signal(signal.SIGTERM, client.stop)
+        client.init()
+        client.run()
+    finally:
+        client.close()
+    return 0
 
 if __name__ == '__main__':
     raise SystemExit(main())
