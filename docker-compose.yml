@@ -13,6 +13,13 @@ services:
     environment:
       - CONFIG_FILE=/config/fan-controller.yaml
 
+  cec-bridge:
+    build:
+      context: cec-bridge
+    restart: unless-stopped
+    # for access to CEC dongle
+    privileged: true
+
   ps5-monitor:
     build:
       context: ps5-monitor
