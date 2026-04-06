@@ -60,7 +60,7 @@ def parse_command(raw_command: str) -> CECMessage | None:
 
 class CECClient:
     def __init__(self) -> None:
-        self.active_source: int | None = None
+        self.active_source_id: int | None = None
         self.config: cec.libcec_configuration | None = None
         self.command_callback = self.handle_command
         self.lib: cec.ICECAdapter | None = None
@@ -98,15 +98,34 @@ class CECClient:
         return 0
 
     def process_message(self, message: CECMessage) -> None:
+        print(
+            f'dbg src={message.source:x} dst={message.destination:x} opcode={message.opcode:02x} '
+            f'args={message.parameters} raw="{message.raw}"',
+            flush=True,
+        )
+
         if message.source != BROADCAST_ADDRESS and message.source not in self.devices:
             self.scan_device(message.source)
 
-        opcode = '--' if message.opcode is None else f'{message.opcode:02x}'
-        #print(
-        #    f'dbg src={message.source:x} dst={message.destination:x} opcode={opcode} '
-        #    f'args={message.parameters} raw="{message.raw}"',
-        #    flush=True,
-        #)
+        match message.opcode:
+            case 0x82:
+                self.on_become_active(message.source)
+            case 0x9D:
+                if message.source == self.active_source_id:
+                    self.on_become_active(None)
+
+    def on_become_active(self, device_id: int | None) -> None:
+        if self.active_source_id == device_id:
+            return  # nothing to do here
+
+        if device_id is None:
+            self.active_source_id = None
+            print('No active device')
+            return
+
+        self.active_source_id = device_id
+        device = self.devices[device_id]
+        print(f'Active device: {device}')
 
     def close(self) -> None:
         if self.lib is not None:
@@ -118,9 +137,13 @@ class CECClient:
 
     def scan_devices(self) -> None:
         self.devices.clear()
-        self.active_source = self.lib.GetActiveSource()
         for logical_address in range(LOGICAL_ADDRESS_COUNT):
             self.scan_device(logical_address)
+
+        active = self.lib.GetActiveSource()
+        if active == -1:
+            active = None
+        self.on_become_active(active)
 
     def scan_device(self, logical_address: int) -> CECDevice | None:
         if logical_address >= LOGICAL_ADDRESS_COUNT:
