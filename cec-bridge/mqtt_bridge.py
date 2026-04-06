@@ -108,11 +108,14 @@ class CECClient:
             self.scan_device(message.source)
 
         match message.opcode:
-            case 0x82:
+            case cec.CEC_OPCODE_ACTIVE_SOURCE:
                 self.on_become_active(message.source)
-            case 0x9D:
-                if message.source == self.active_source_id:
-                    self.on_become_active(None)
+            case cec.CEC_OPCODE_INACTIVE_SOURCE:
+                self.on_become_inactive(message.source)
+            case cec.CEC_OPCODE_STANDBY:
+                self.on_power_status(message.source, cec.CEC_POWER_STATUS_STANDBY)
+            case cec.CEC_OPCODE_REPORT_POWER_STATUS if message.parameters:
+                self.on_power_status(message.source, message.parameters[0])
 
     def on_become_active(self, device_id: int | None) -> None:
         if self.active_source_id == device_id:
@@ -126,6 +129,29 @@ class CECClient:
         self.active_source_id = device_id
         device = self.devices[device_id]
         print(f'Active device: {device}')
+
+    def on_become_inactive(self, device_id: int) -> None:
+        if device_id != self.active_source_id:
+            return  # doesn't match our records
+        # TODO: Enqueue a device_id power status check in near future
+        self.on_become_active(None)
+
+    def on_power_status(self, device_id: int, power_status: int) -> None:
+        match power_status:
+            case cec.CEC_POWER_STATUS_ON:
+                power_status_name = 'on'
+            case cec.CEC_POWER_STATUS_STANDBY:
+                power_status_name = 'standby'
+            case _:
+                return
+
+        device = self.devices.get(device_id)
+        if device and device.power_status != power_status_name:
+            device.power_status = power_status_name
+            print(f'Power status for {device.osd_name}: {power_status_name}')
+
+        if power_status == cec.CEC_POWER_STATUS_STANDBY and device_id == self.active_source_id:
+            self.on_become_active(None)
 
     def close(self) -> None:
         if self.lib is not None:
