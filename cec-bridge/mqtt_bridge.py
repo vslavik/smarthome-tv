@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from queue import Empty, SimpleQueue
 import signal
 import time
 
 import cec
 import msgspec
+
+IDLE_SLEEP = 0.2
 
 
 class CECMessage(msgspec.Struct, frozen=True):
@@ -41,11 +44,14 @@ def parse_command(raw_command: str) -> CECMessage | None:
         opcode=opcode,
         parameters=parameters,
     )
+
+
 class CECClient:
     def __init__(self) -> None:
         self.config: cec.libcec_configuration | None = None
         self.command_callback = self.handle_command
         self.lib: cec.ICECAdapter | None = None
+        self.messages: SimpleQueue[CECMessage] = SimpleQueue()
         self.running = False
 
     def init(self) -> None:
@@ -73,17 +79,17 @@ class CECClient:
             return 0
 
         message = parse_command(raw[3:])
-        if message is None:
-            return 0
+        if message is not None:
+            self.messages.put(message)
+        return 0
 
+    def process_message(self, message: CECMessage) -> None:
         opcode = '--' if message.opcode is None else f'{message.opcode:02x}'
         print(
             f'dbg src={message.source:x} dst={message.destination:x} opcode={opcode} '
             f'args={message.parameters} raw="{message.raw}"',
             flush=True,
         )
-
-        return 0
 
     def close(self) -> None:
         if self.lib is not None:
@@ -98,7 +104,14 @@ class CECClient:
 
         self.running = True
         while self.running:
-            time.sleep(3600)
+            try:
+                while True:
+                    message = self.messages.get_nowait()
+                    self.process_message(message)
+            except Empty:
+                pass
+
+            time.sleep(IDLE_SLEEP)
 
 
 def main() -> int:
