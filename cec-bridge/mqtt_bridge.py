@@ -4,17 +4,23 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 from queue import Empty, SimpleQueue
 import signal
 import time
+from typing import Callable
 
 import cec
 import msgspec
+import paho.mqtt.client as mqtt
 
 
 IDLE_SLEEP = 0.2
 LOGICAL_ADDRESS_COUNT = 15
 BROADCAST_ADDRESS = 15
+MQTT_PORT = 1883
+MQTT_KEEPALIVE = 30
+MQTT_BASE_TOPIC = 'tvaux/cec'
 
 
 logger = logging.getLogger(__name__)
@@ -37,6 +43,11 @@ class CECDevice(msgspec.Struct):
     physical_address: str
     vendor: str
     cec_version: str
+
+
+class CECDeviceEvent(msgspec.Struct):
+    event: str
+    device: CECDevice | None
 
 
 def parse_command(raw_command: str) -> CECMessage | None:
@@ -65,14 +76,15 @@ def parse_command(raw_command: str) -> CECMessage | None:
 
 
 class CECClient:
-    def __init__(self) -> None:
+    def __init__(self, publish: Callable[[str, CECDeviceEvent], None]) -> None:
         self.active_source_id: int | None = None
+        self.active_source_known = False
         self.config: cec.libcec_configuration | None = None
         self.command_callback = self.handle_command
         self.lib: cec.ICECAdapter | None = None
         self.devices: dict[int, CECDevice] = {}
         self.messages: SimpleQueue[CECMessage] = SimpleQueue()
-        self.running = False
+        self.publish = publish
 
     def init(self) -> None:
         self.config = cec.libcec_configuration()
@@ -127,16 +139,26 @@ class CECClient:
                 self.on_power_status(message.source, message.parameters[0])
 
     def on_become_active(self, device_id: int | None) -> None:
-        if self.active_source_id == device_id:
-            return  # nothing to do here
+        if self.active_source_known and self.active_source_id == device_id:
+            return
 
+        self.active_source_known = True
         if device_id is None:
             self.active_source_id = None
             logger.info('Active source cleared')
+            self.publish(
+                f'{MQTT_BASE_TOPIC}/active',
+                CECDeviceEvent(event='active-source', device=None),
+            )
             return
 
         self.active_source_id = device_id
+        device = self.devices.get(device_id)
         logger.info('Active source is now %s', self.device_label(device_id))
+        self.publish(
+            f'{MQTT_BASE_TOPIC}/active',
+            CECDeviceEvent(event='active-source', device=device),
+        )
 
     def on_become_inactive(self, device_id: int) -> None:
         if device_id != self.active_source_id:
@@ -157,6 +179,7 @@ class CECClient:
         if device and device.power_status != power_status_name:
             device.power_status = power_status_name
             logger.info('Power status for %s -> %s', self.device_label(device_id), power_status_name)
+            self.publish_device_event(device, 'power')
 
         if power_status == cec.CEC_POWER_STATUS_STANDBY and device_id == self.active_source_id:
             self.on_become_active(None)
@@ -164,10 +187,6 @@ class CECClient:
     def close(self) -> None:
         if self.lib is not None:
             self.lib.Close()
-
-    def stop(self, _sig=None, _frame=None) -> None:
-        self.running = False
-        self.close()
 
     def scan_devices(self) -> None:
         self.devices.clear()
@@ -200,6 +219,7 @@ class CECClient:
         )
         self.devices[logical_address] = device
         logger.info('Discovered device %s', device)
+        self.publish_device_event(device, 'scan')
         return device
 
     def device_label(self, device_id: int) -> str:
@@ -208,25 +228,59 @@ class CECClient:
             return f'{device_id:X}'
         return f'{device_id:X} ({device.osd_name})'
 
+    def process_pending_messages(self) -> None:
+        try:
+            while True:
+                message = self.messages.get_nowait()
+                self.process_message(message)
+        except Empty:
+            pass
+
+    def publish_device_event(self, device: CECDevice, event: str) -> None:
+        self.publish(
+            f'{MQTT_BASE_TOPIC}/device/{device.logical_address}',
+            CECDeviceEvent(event=event, device=device),
+        )
+
+
+class CECBridge:
+    def __init__(self, mqtt_host: str) -> None:
+        self.mqtt_host = mqtt_host
+        self.mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+        self.cec = CECClient(publish=self.publish_json)
+        self.json_encoder = msgspec.json.Encoder()
+        self.running = False
+
+    def init(self) -> None:
+        self.mqtt.connect(self.mqtt_host, MQTT_PORT, keepalive=MQTT_KEEPALIVE)
+        self.cec.init()
+
+    def publish_json(self, topic: str, payload: CECDeviceEvent) -> None:
+        self.mqtt.publish(topic, self.json_encoder.encode(payload), qos=1, retain=True)
+
+    def stop(self, _sig=None, _frame=None) -> None:
+        self.running = False
+
+    def close(self) -> None:
+        self.cec.close()
+        self.mqtt.loop_stop()
+        self.mqtt.disconnect()
+
     def run(self) -> None:
-        self.scan_devices()
+        self.mqtt.loop_start()
+        self.cec.scan_devices()
         logger.info('Observing CEC traffic')
 
         self.running = True
         while self.running:
-            try:
-                while True:
-                    message = self.messages.get_nowait()
-                    self.process_message(message)
-            except Empty:
-                pass
-
+            self.cec.process_pending_messages()
             time.sleep(IDLE_SLEEP)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument('--debug', action='store_true', help='Enable verbose CEC message logging')
+    parser.add_argument('--mqtt-host', default=os.getenv('MQTT_HOST'))
     return parser.parse_args()
 
 
@@ -240,15 +294,17 @@ def configure_logging(debug: bool) -> None:
 def main() -> int:
     args = parse_args()
     configure_logging(args.debug)
+    if not args.mqtt_host:
+        raise SystemExit('--mqtt-host or MQTT_HOST is required')
 
-    client = CECClient()
+    bridge = CECBridge(mqtt_host=args.mqtt_host)
     try:
-        signal.signal(signal.SIGINT, client.stop)
-        signal.signal(signal.SIGTERM, client.stop)
-        client.init()
-        client.run()
+        signal.signal(signal.SIGINT, bridge.stop)
+        signal.signal(signal.SIGTERM, bridge.stop)
+        bridge.init()
+        bridge.run()
     finally:
-        client.close()
+        bridge.close()
     return 0
 
 if __name__ == '__main__':
