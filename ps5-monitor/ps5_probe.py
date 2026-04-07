@@ -58,17 +58,29 @@ def parse_reply(data):
 def probe(host, port=9302, timeout=1.0, tries=3):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(timeout)
+    last_error = None
     try:
         for _ in range(tries):
-            sock.sendto(MSG, (host, port))
             try:
+                sock.sendto(MSG, (host, port))
                 data, _ = sock.recvfrom(4096)
             except socket.timeout:
                 continue
-            return parse_reply(data)
+            except (OSError, ValueError) as e:
+                last_error = str(e)
+                continue
+
+            try:
+                return parse_reply(data)
+            except ValueError as e:
+                last_error = str(e)
     finally:
         sock.close()
-    return {"state": "off", "code": None}
+
+    result = {"state": "off", "code": None}
+    if last_error is not None:
+        result["error"] = last_error
+    return result
 
 
 def main():

@@ -18,8 +18,9 @@ MQTT_PORT = 1883
 MQTT_KEEPALIVE = 30
 POLL_INTERVAL = 1.0
 PROBE_TIMEOUT = 0.5
-OFF_DELAY = 5.0
 IDLE_SLEEP = 0.2
+# PS5 goes into non-responding state during on<->standby transition, so we wait a bit before declaring it off
+OFF_DELAY = 5.0
 
 MQTT_STATE_TOPIC     = "tvaux/ps5/ddp/state"
 MQTT_COMMAND_TOPIC   = "tvaux/ps5/ddp/command"
@@ -121,12 +122,9 @@ class Ps5MqttBridge:
                     time.sleep(min(IDLE_SLEEP, self.state.next_probe_at - now))
                     continue
 
-                try:
-                    result = probe(self.ps5_host, timeout=PROBE_TIMEOUT, tries=1)
-                    self.state.next_probe_at = time.monotonic() + POLL_INTERVAL
-                    self.handle_probe_result(result)
-                except ValueError as e:
-                    logging.error("failed probe: %s", e)
+                result = probe(self.ps5_host, timeout=PROBE_TIMEOUT, tries=1)
+                self.state.next_probe_at = time.monotonic() + POLL_INTERVAL
+                self.handle_probe_result(result)
         finally:
             self.client.loop_stop()
             self.client.disconnect()
