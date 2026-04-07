@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import argparse
+import logging
 from queue import Empty, SimpleQueue
 import signal
 import time
@@ -9,9 +11,13 @@ import time
 import cec
 import msgspec
 
+
 IDLE_SLEEP = 0.2
 LOGICAL_ADDRESS_COUNT = 15
 BROADCAST_ADDRESS = 15
+
+
+logger = logging.getLogger(__name__)
 
 
 class CECMessage(msgspec.Struct, frozen=True):
@@ -85,7 +91,7 @@ class CECClient:
         if not self.lib.Open(port):
             raise RuntimeError(f'Failed to open {port}')
 
-        print(f'opened {port}', flush=True)
+        logger.info('Opened adapter %s', port)
 
     def handle_command(self, cmd) -> int:
         raw = str(cmd).strip()
@@ -98,10 +104,13 @@ class CECClient:
         return 0
 
     def process_message(self, message: CECMessage) -> None:
-        print(
-            f'dbg src={message.source:x} dst={message.destination:x} opcode={message.opcode:02x} '
-            f'args={message.parameters} raw="{message.raw}"',
-            flush=True,
+        logger.debug(
+            'CEC message src=%X dst=%X opcode=%s args=%s raw=%r',
+            message.source,
+            message.destination,
+            '--' if message.opcode is None else f'{message.opcode:02X}',
+            message.parameters,
+            message.raw,
         )
 
         if message.source != BROADCAST_ADDRESS and message.source not in self.devices:
@@ -123,12 +132,11 @@ class CECClient:
 
         if device_id is None:
             self.active_source_id = None
-            print('No active device')
+            logger.info('Active source cleared')
             return
 
         self.active_source_id = device_id
-        device = self.devices[device_id]
-        print(f'Active device: {device}')
+        logger.info('Active source is now %s', self.device_label(device_id))
 
     def on_become_inactive(self, device_id: int) -> None:
         if device_id != self.active_source_id:
@@ -148,7 +156,7 @@ class CECClient:
         device = self.devices.get(device_id)
         if device and device.power_status != power_status_name:
             device.power_status = power_status_name
-            print(f'Power status for {device.osd_name}: {power_status_name}')
+            logger.info('Power status for %s -> %s', self.device_label(device_id), power_status_name)
 
         if power_status == cec.CEC_POWER_STATUS_STANDBY and device_id == self.active_source_id:
             self.on_become_active(None)
@@ -190,13 +198,19 @@ class CECClient:
             cec_version=self.lib.CecVersionToString(self.lib.GetDeviceCecVersion(logical_address)),
             power_status=self.lib.PowerStatusToString(self.lib.GetDevicePowerStatus(logical_address)),
         )
-        print(f'device: {device}')
         self.devices[logical_address] = device
+        logger.info('Discovered device %s', device)
         return device
+
+    def device_label(self, device_id: int) -> str:
+        device = self.devices.get(device_id)
+        if device is None:
+            return f'{device_id:X}'
+        return f'{device_id:X} ({device.osd_name})'
 
     def run(self) -> None:
         self.scan_devices()
-        print('observing...', flush=True)
+        logger.info('Observing CEC traffic')
 
         self.running = True
         while self.running:
@@ -210,7 +224,23 @@ class CECClient:
             time.sleep(IDLE_SLEEP)
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--debug', action='store_true', help='Enable verbose CEC message logging')
+    return parser.parse_args()
+
+
+def configure_logging(debug: bool) -> None:
+    logging.basicConfig(
+        level=logging.DEBUG if debug else logging.INFO,
+        format='%(asctime)s %(levelname)s %(message)s',
+    )
+
+
 def main() -> int:
+    args = parse_args()
+    configure_logging(args.debug)
+
     client = CECClient()
     try:
         signal.signal(signal.SIGINT, client.stop)
