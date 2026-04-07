@@ -39,7 +39,7 @@ class CECDevice(msgspec.Struct):
     osd_name: str
     power_status: str
     logical_address: int
-    logical_name: str
+    kind: str | None
     physical_address: str
     vendor: str
     cec_version: str
@@ -73,6 +73,18 @@ def parse_command(raw_command: str) -> CECMessage | None:
         opcode=opcode,
         parameters=parameters,
     )
+
+
+def logical_address_kind(logical_address: int) -> str | None:
+    match logical_address:
+        case cec.CECDEVICE_TV:
+            return 'tv'
+        case cec.CECDEVICE_AUDIOSYSTEM:
+            return 'audio'
+        case cec.CECDEVICE_PLAYBACKDEVICE1 | cec.CECDEVICE_PLAYBACKDEVICE2 | cec.CECDEVICE_PLAYBACKDEVICE3:
+            return 'playback'
+        case _:
+            return None
 
 
 class CECClient:
@@ -210,7 +222,7 @@ class CECClient:
 
         device = CECDevice(
             logical_address=logical_address,
-            logical_name=self.lib.LogicalAddressToString(logical_address),
+            kind=logical_address_kind(logical_address),
             physical_address=physical_nice,
             vendor=self.lib.VendorIdToString(self.lib.GetDeviceVendorId(logical_address)),
             osd_name=self.lib.GetDeviceOSDName(logical_address),
