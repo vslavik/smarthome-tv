@@ -66,7 +66,7 @@ def main():
         while not stopped:
             state = controller.step(dry_run)
             if mclient:
-                mclient.publish(MQTT_STATE_TOPIC, json.dumps(state), qos=1, retain=True)
+                mclient.publish(MQTT_STATE_TOPIC, json.dumps(state), qos=0, retain=False)
     finally:
         if mclient:
             mclient.loop_stop()
