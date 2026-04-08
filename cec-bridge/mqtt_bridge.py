@@ -17,10 +17,11 @@ import paho.mqtt.client as mqtt
 
 IDLE_SLEEP = 0.2
 LOGICAL_ADDRESS_COUNT = 15
-BROADCAST_ADDRESS = 15
+
 MQTT_PORT = 1883
 MQTT_KEEPALIVE = 30
 MQTT_BASE_TOPIC = 'tvaux/cec'
+MQTT_COMMAND_TOPIC = f'{MQTT_BASE_TOPIC}/command'
 
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,11 @@ class CECDevice(msgspec.Struct):
 class CECDeviceEvent(msgspec.Struct):
     event: str
     device: CECDevice | None
+
+
+class CECCommand(msgspec.Struct):
+    action: str
+    device_id: int | None = None
 
 
 def parse_command(raw_command: str) -> CECMessage | None:
@@ -137,7 +143,7 @@ class CECClient:
             message.raw,
         )
 
-        if message.source != BROADCAST_ADDRESS and message.source not in self.devices:
+        if message.source != cec.CECDEVICE_BROADCAST and message.source not in self.devices:
             self.scan_device(message.source)
 
         match message.opcode:
@@ -200,6 +206,13 @@ class CECClient:
         if self.lib is not None:
             self.lib.Close()
 
+    def execute_command(self, command: CECCommand) -> None:
+        match command.action:
+            case 'standby':
+                self.standby(command.device_id)
+            case _:
+                logger.warning('Ignoring unknown CEC command action %r', command.action)
+
     def scan_devices(self) -> None:
         self.devices.clear()
         for logical_address in range(LOGICAL_ADDRESS_COUNT):
@@ -254,13 +267,28 @@ class CECClient:
             CECDeviceEvent(event=event, device=device),
         )
 
+    def standby(self, device_id: int | None) -> None:
+        if device_id is None:
+            device_id = cec.CECDEVICE_BROADCAST
+
+        if device_id <= 0 or device_id > cec.CECDEVICE_BROADCAST:
+            logger.warning('Ignoring standby for invalid device_id %r', device_id)
+            return
+
+        if not self.lib.StandbyDevices(device_id):
+            logger.error('Standby command failed for %r', device_id)
+
 
 class CECBridge:
     def __init__(self, mqtt_host: str) -> None:
         self.mqtt_host = mqtt_host
         self.mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+        self.mqtt.on_connect = self.on_connect
+        self.mqtt.on_message = self.on_message
         self.cec = CECClient(publish=self.publish_json)
+        self.commands: SimpleQueue[CECCommand] = SimpleQueue()
         self.json_encoder = msgspec.json.Encoder()
+        self.command_decoder = msgspec.json.Decoder(CECCommand)
         self.running = False
 
     def init(self) -> None:
@@ -269,6 +297,19 @@ class CECBridge:
 
     def publish_json(self, topic: str, payload: CECDeviceEvent) -> None:
         self.mqtt.publish(topic, self.json_encoder.encode(payload), qos=1, retain=True)
+
+    def on_connect(self, client, userdata, flags, reason_code, properties=None) -> None:
+        client.subscribe(MQTT_COMMAND_TOPIC, qos=1)
+        logger.info('Subscribed to %s', MQTT_COMMAND_TOPIC)
+
+    def on_message(self, client, userdata, msg) -> None:
+        try:
+            command = self.command_decoder.decode(msg.payload)
+        except msgspec.MsgspecError as error:
+            logger.warning('Ignoring invalid command payload on %s: %s', msg.topic, error)
+            return
+
+        self.commands.put(command)
 
     def stop(self, _sig=None, _frame=None) -> None:
         self.running = False
@@ -285,8 +326,17 @@ class CECBridge:
 
         self.running = True
         while self.running:
+            self.process_pending_commands()
             self.cec.process_pending_messages()
             time.sleep(IDLE_SLEEP)
+
+    def process_pending_commands(self) -> None:
+        try:
+            while True:
+                command = self.commands.get_nowait()
+                self.cec.execute_command(command)
+        except Empty:
+            pass
 
 
 def parse_args() -> argparse.Namespace:
