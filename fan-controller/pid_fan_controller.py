@@ -20,6 +20,10 @@ class PwmFan:
     def current_airflow(self):
         return self._current_pwm * self.max_airflow / self.maxPwm
 
+    @property
+    def speed_percent(self):
+        return int(self._current_pwm / self.maxPwm * 100)
+
     def set_pwm(self, pwm, dry_run=False):
         """
         set fan speed in PWM value (0-255)
@@ -131,10 +135,10 @@ class HeatPressureSrc:
                 sample_time=self.sample_interval
                 )
 
-    def get_heat_pressure(self):
+    def get_heat_pressure_and_temp(self):
         temperature = self.temp_sensor.read_temp()
         heat_pressure = self.pid_controller(temperature)
-        return heat_pressure
+        return heat_pressure, round(temperature, 1)
 
     def get_name(self):
         return self.name
@@ -192,24 +196,42 @@ class PID_fan_controller:
         self.fans = [ instantiate_fan(fan_config) for fan_config in self.config["fans"] ]
         self.balancing_fan = instantiate_fan(self.config.get("balancing_fan"), balancing=True)
 
+    def step(self, dry_run=False):
+        time.sleep(self.sample_interval)
+        heat_pressures = {}
+        data_temps = {}
+        data_fans = {}
+        for hp in self.heat_pressure_srcs:
+            name = hp.get_name()
+            pressure, temp = hp.get_heat_pressure_and_temp()
+            heat_pressures[name] = pressure
+            data_temps[name] = temp
+
+        for fan in self.fans:
+            press_srcs = fan.get_pressure_srcs()
+            hp = [ heat_pressures[hp_src] for hp_src in press_srcs ]
+            highest_pressure = max(hp)
+            fan.set_speed(highest_pressure, dry_run)
+            data_fans[fan.name] = {
+                'pct': fan.speed_percent,
+                'airflow': int(fan.current_airflow),
+            }
+
+        if self.balancing_fan:
+            self.balancing_fan.update_speed(self.fans, dry_run)
+            data_fans[self.balancing_fan.name] = {
+                'pct': self.balancing_fan.speed_percent,
+                'airflow': int(self.balancing_fan.current_airflow),
+            }
+
+        return {
+            'temps': data_temps,
+            'fans': data_fans,
+        }
+
     def run_loop(self, dry_run=False):
         while True:
-            heat_pressures = {}
-            for hp in self.heat_pressure_srcs:
-                name = hp.get_name()
-                pressure = hp.get_heat_pressure()
-                heat_pressures[name] = pressure
-
-            for fan in self.fans:
-                press_srcs = fan.get_pressure_srcs()
-                hp = [ heat_pressures[hp_src] for hp_src in press_srcs ]
-                highest_pressure = max(hp)
-                fan.set_speed(highest_pressure, dry_run)
-
-            if self.balancing_fan:
-                self.balancing_fan.update_speed(self.fans, dry_run)
-
-            time.sleep(self.sample_interval)
+            self.step(dry_run)
 
     def override_fan_auto_control(self, override, dry_run=False):
         for fan in self.config['fans']:
