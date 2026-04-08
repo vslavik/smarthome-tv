@@ -1,0 +1,95 @@
+cec-bridge
+==========
+
+Purpose
+-------
+
+`cec-bridge` is the low-level HDMI-CEC component for the TV / home theater
+setup. It runs on Raspberry Pi with a Pulse-Eight USB adapter and bridges CEC
+state and commands to MQTT so a higher-level orchestrator can make decisions.
+
+
+Principles
+----------
+
+This project is intentionally small.
+
+- It should expose useful state, not try to be a complete HDMI-CEC automation platform.
+- It should prefer explicit uncertainty over pretending CEC is reliable.
+- Higher-level policy belongs in the orchestrator unless there is a strong reason to keep it local.
+
+
+Current Model
+-------------
+
+The bridge keeps an in-memory map of known devices keyed by logical address and
+tracks active source separately.
+
+Published device data is intentionally practical rather than spec-pure:
+
+- `logical_address`
+- `kind`
+- `physical_address`
+- `osd_name`
+- `vendor`
+- `cec_version`
+- `power_status`
+
+`kind` is narrowed to what is useful here:
+
+- `tv`
+- `audio`
+- `playback`
+- `null` for everything else
+
+
+Important Decisions
+-------------------
+
+Active source is treated as bus-level state, not as a property of a device.
+
+Power status is only tracked in the stable states we care about now:
+
+- `on`
+- `standby`
+
+Important semantic rule:
+
+- standby implies a device should no longer be treated as active
+- inactive-source does not imply standby
+
+Another important rule: a known device must not be forgotten just because one
+scan or poll failed.
+
+
+MQTT Shape
+----------
+
+Topics are under `tvaux/cec/`.
+
+Current retained topics:
+
+- `tvaux/cec/device/{id}`
+- `tvaux/cec/active`
+
+Payloads are JSON and currently use:
+
+- `event`
+- `device`
+
+Current event names:
+
+- `scan`
+- `power`
+- `active-source`
+
+
+Real-World Caveat
+-----------------
+
+CEC is unreliable in practice. Devices can disappear from the bus, stop ACKing,
+or report stale state.
+
+The NVIDIA Shield has already shown this kind of flaky behavior. Because of
+that, the bridge should eventually model not just device state, but also
+whether a device is currently reachable.
