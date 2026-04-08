@@ -12,6 +12,7 @@ services:
       - config:/config
     environment:
       - CONFIG_FILE=/config/fan-controller.yaml
+      - MQTT_HOST=xxx
 
   ps5-monitor:
     build:
