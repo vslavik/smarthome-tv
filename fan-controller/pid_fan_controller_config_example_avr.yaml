@@ -19,6 +19,7 @@ heat_pressure_srcs:
 fans:
   - name: ps
     wildcard_path: /sys/class/hwmon/hwmon1/pwm1
+    rpm_path: /sys/class/hwmon/hwmon1/fan1_input
     pwm_modes:
       manual: 1
       auto: 5
@@ -30,6 +31,7 @@ fans:
       - PlayStation
   - name: avr
     wildcard_path: /sys/class/hwmon/hwmon1/pwm2
+    rpm_path: /sys/class/hwmon/hwmon1/fan2_input
     pwm_modes:
       manual: 1
       auto: 5
@@ -43,7 +45,8 @@ fans:
 # This is the fan that balances intake/exhaust of the other fans:
 balancing_fan:
   name: wall_fan
-  wildcard_path: /sys/class/hwmon/hwmon0/pwm1
+  wildcard_path: /sys/class/hwmon/hwmon0/pwm3
+  rpm_path: /sys/class/hwmon/hwmon0/fan3_input
   pwm_modes:
     manual: 1
     auto: 5

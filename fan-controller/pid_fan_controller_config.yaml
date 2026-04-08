@@ -22,6 +22,7 @@ heat_pressure_srcs:
 fans:
   - name: aio
     wildcard_path: /sys/devices/platform/nct6775.2592/hwmon/hwmon*/pwm1
+    rpm_path: /sys/devices/platform/nct6775.2592/hwmon/hwmon0/fan1_input
     pwm_modes:
       manual: 1
       auto: 5
@@ -35,6 +36,7 @@ fans:
       - GPU
   - name: exhaust_top_back
     wildcard_path: /sys/devices/platform/nct6775.2592/hwmon/hwmon*/pwm2
+    rpm_path: /sys/devices/platform/nct6775.2592/hwmon/hwmon0/fan2_input
     pwm_modes:
       manual: 1
       auto: 5
@@ -46,6 +48,7 @@ fans:
       - GPU
   - name: aio_exhaust
     wildcard_path: /sys/devices/platform/nct6775.2592/hwmon/hwmon*/pwm5
+    rpm_path: /sys/devices/platform/nct6775.2592/hwmon/hwmon0/fan5_input
     pwm_modes:
       manual: 1
       auto: 5
@@ -57,6 +60,7 @@ fans:
       - GPU
   - name: exhaust_back
     wildcard_path: /sys/devices/platform/nct6775.2592/hwmon/hwmon*/pwm3
+    rpm_path: /sys/devices/platform/nct6775.2592/hwmon/hwmon0/fan3_input
     pwm_modes:
       manual: 1
       auto: 5
