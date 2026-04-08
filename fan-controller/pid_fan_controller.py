@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 from simple_pid import PID
+from pathlib import Path
 import time, glob, yaml, subprocess
 
 class PwmFan:
-    def __init__(self, name, devPath, minPwm, maxPwm, maxAirflow, press_srcs):
+    def __init__(self, name, devPath, minPwm, maxPwm, maxAirflow, press_srcs, rpm_path):
         assert minPwm < maxPwm
         #assert minPwm >= 0 and minPwm <= 255
         #assert maxPwm >= 0 and maxPwm <= 255
@@ -14,6 +15,7 @@ class PwmFan:
         self.range = self.maxPwm - self.minPwm
         self.max_airflow = maxAirflow  # in m3/h
         self.press_srcs = press_srcs
+        self.rpm_path = Path(rpm_path)
         self._current_pwm = 0
 
     @property
@@ -69,12 +71,15 @@ class PwmFan:
     def get_pressure_srcs(self):
         return self.press_srcs
 
+    def read_rpm(self):
+        return int(self.rpm_path.read_text().strip())
+
 class BalancingPwmFan(PwmFan):
     """
     A fan that balances airflow based on other fans' airflow.
     """
-    def __init__(self, name, devPath, minPwm, maxPwm, max_airflow, correction_factor):
-        super().__init__(name, devPath, minPwm, maxPwm, max_airflow, [])
+    def __init__(self, name, devPath, minPwm, maxPwm, max_airflow, correction_factor, rpm_path):
+        super().__init__(name, devPath, minPwm, maxPwm, max_airflow, [], rpm_path)
         self.correction_factor = correction_factor
 
     def update_speed(self, other_fans, dry_run=False):
@@ -152,15 +157,16 @@ def instantiate_fan(cfg, balancing=False):
     name = cfg['name']
     wc_path = cfg['wildcard_path']
     path = get_only_one_wildcard_match(wc_path)
+    rpm_path = cfg['rpm_path']
     min_pwm = cfg['min_pwm']
     max_pwm = cfg['max_pwm']
     max_airflow = cfg['max_airflow']
     if balancing:
         correction_factor = cfg.get('correction_factor', 1.0)
-        return BalancingPwmFan(name, path, min_pwm, max_pwm, max_airflow, correction_factor)
+        return BalancingPwmFan(name, path, min_pwm, max_pwm, max_airflow, correction_factor, rpm_path)
     else:
         press_srcs = cfg['heat_pressure_srcs']
-        return PwmFan(name, path, min_pwm, max_pwm, max_airflow, press_srcs)
+        return PwmFan(name, path, min_pwm, max_pwm, max_airflow, press_srcs, rpm_path)
 
 def instantiate_hp_src(cfg, sample_interval):
     name = cfg['name']
@@ -215,6 +221,7 @@ class PID_fan_controller:
             data_fans[fan.name] = {
                 'pct': fan.speed_percent,
                 'airflow': int(fan.current_airflow),
+                'rpm': fan.read_rpm(),
             }
 
         if self.balancing_fan:
@@ -222,6 +229,7 @@ class PID_fan_controller:
             data_fans[self.balancing_fan.name] = {
                 'pct': self.balancing_fan.speed_percent,
                 'airflow': int(self.balancing_fan.current_airflow),
+                'rpm': self.balancing_fan.read_rpm(),
             }
 
         return {
