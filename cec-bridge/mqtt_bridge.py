@@ -42,7 +42,7 @@ class CECDevice(msgspec.Struct):
     logical_address: int
     kind: str | None
     physical_address: str
-    vendor: str
+    vendor: str | None
     cec_version: str
 
 
@@ -231,13 +231,14 @@ class CECClient:
             return None
 
         pa = self.lib.GetDevicePhysicalAddress(logical_address)
+        vendor_id = self.lib.GetDeviceVendorId(logical_address)
         physical_nice = f'{(pa >> 12) & 0xF}.{(pa >> 8) & 0xF}.{(pa >> 4) & 0xF}.{pa & 0xF}'
 
         device = CECDevice(
             logical_address=logical_address,
             kind=logical_address_kind(logical_address),
             physical_address=physical_nice,
-            vendor=self.lib.VendorIdToString(self.lib.GetDeviceVendorId(logical_address)),
+            vendor=None if vendor_id == cec.CEC_VENDOR_UNKNOWN else self.lib.VendorIdToString(vendor_id),
             osd_name=self.lib.GetDeviceOSDName(logical_address),
             cec_version=self.lib.CecVersionToString(self.lib.GetDeviceCecVersion(logical_address)),
             power_status=self.lib.PowerStatusToString(self.lib.GetDevicePowerStatus(logical_address)),
