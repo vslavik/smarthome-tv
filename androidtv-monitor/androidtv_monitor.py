@@ -17,7 +17,7 @@ YOUTUBE_APP = "com.google.android.youtube.tv"
 APPLE_TV_APP = "com.apple.atve.androidtv.appletv"
 
 
-class AndroidTVState(msgspec.Struct):
+class AndroidTVState(msgspec.Struct, omit_defaults=True):
     """Observed playback state for the Android TV device.
 
     Possible `state` values:
