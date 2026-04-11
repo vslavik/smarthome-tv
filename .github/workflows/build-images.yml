@@ -20,6 +20,7 @@ jobs:
           - service: fan-controller
           - service: cec-bridge
           - service: ps5-monitor
+          - service: androidtv-monitor
     permissions:
       contents: read
       packages: write
