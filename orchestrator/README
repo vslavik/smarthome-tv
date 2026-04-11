@@ -18,3 +18,6 @@ Home Assistant.
 
 The state is published as JSON messages to the tvaux/state topic for the
 overall state (playback etc.) and tvaux/devices for individual device states.
+
+Configuration is loaded from a human-edited TOML file. See
+`tv_orchestrator.example.toml` for the current shape.

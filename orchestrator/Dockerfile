@@ -20,5 +20,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 ENV MQTT_HOST=""
 
+VOLUME ["/config"]
+
 STOPSIGNAL SIGINT
-CMD ["/app/tv_orchestrator.py"]
+CMD ["/app/tv_orchestrator.py", "--config", "/config/tv_orchestrator.toml"]
