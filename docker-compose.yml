@@ -29,5 +29,15 @@ services:
       - PS5_HOST=xxx
       - MQTT_HOST=xxx
 
+  androidtv-monitor:
+    build:
+      context: androidtv-monitor
+    restart: unless-stopped
+    volumes:
+      - config:/config
+    environment:
+      - ANDROIDTV_HOST=xxx
+      - MQTT_HOST=xxx
+
 volumes:
   config:
