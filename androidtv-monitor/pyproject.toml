@@ -1,0 +1,8 @@
+[project]
+name = "androidtv-monitor"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "androidtv>=0.0.75,<0.1",
+    "msgspec>=0.21.0",
+]
