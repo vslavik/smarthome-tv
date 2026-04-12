@@ -24,6 +24,32 @@ class ConfigError(ValueError):
     pass
 
 
+class CecDevice(msgspec.Struct):
+    osd_name: str
+    power_status: str
+    logical_address: int
+    kind: str | None
+    physical_address: str
+    vendor: str | None
+
+
+class CecEvent(msgspec.Struct):
+    event: str
+    device: CecDevice | None
+
+
+class PS5StateEvent(msgspec.Struct, omit_defaults=True):
+    state: str
+    code: int | None
+    error: str | None = None
+
+
+class AndroidTVStateEvent(msgspec.Struct, omit_defaults=True):
+    state: str | None
+    current_app: str | None
+    error: str | None = None
+
+
 class DeviceConfig(msgspec.Struct, kw_only=True):
     monitor: bool = False
     cec_logical_address: int | None = None
@@ -75,6 +101,31 @@ class Orchestrator:
     def stop(self, *_args: object) -> None:
         self.stopped = True
         logger.info("stopping orchestrator")
+
+    def handle(self, event: object) -> None:
+        match event:
+            case CecEvent("active-source"):
+                self.handle_cec_source_change(event)
+            case CecEvent("power" | "scan"):
+                self.handle_cec_power(event)
+            case PS5StateEvent():
+                self.handle_ps5_state(event)
+            case AndroidTVStateEvent():
+                self.handle_androidtv_state(event)
+            case _:
+                raise TypeError(f"unexpected event: {event!r}")
+
+    def handle_cec_source_change(self, event: CecEvent) -> None:
+        raise NotImplementedError
+
+    def handle_cec_power(self, event: CecEvent) -> None:
+        raise NotImplementedError
+
+    def handle_ps5_state(self, state: PS5StateEvent) -> None:
+        raise NotImplementedError
+
+    def handle_androidtv_state(self, state: AndroidTVStateEvent) -> None:
+        raise NotImplementedError
 
     def run(self) -> int:
         logger.info(
