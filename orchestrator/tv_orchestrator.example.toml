@@ -1,0 +1,19 @@
+# Symbolic device ids used by the orchestrator.
+# The `tv` device is implicit and defaults to CEC logical address 0,
+# but you can still configure it explicitly for clarity.
+
+monitor_devices = ["ps5", "shield"]
+
+[devices.tv]
+cec_logical_address = 0
+
+[devices.avr]
+cec_logical_address = 5
+
+[devices.ps5]
+cec_osd_name = "PlayStation 5"
+ps5_host = "ps5.home.arpa"
+
+[devices.shield]
+cec_osd_name = "SHIELD"
+androidtv_host = "shield.home.arpa"

@@ -1,0 +1,23 @@
+
+This service "orchestrates" various subservices around TV home theater to
+aggregate information from multiple sources and (a) publish a simple,
+reliable state to MQTT, and (b) apply various fixups to CEC to do things
+such as turning off the TV when the PlayStation is turned off, despite
+Sony's best efforts to sabotage such reasonable, basic thing.
+
+The orchestrator collects state and events from the following sources:
+
+- Android TV (via ADB)
+- HDMI-CEC bus (running Pulse8 dongle on a Raspberry Pi)
+- PlayStation 5 (network UDP polling)
+
+The orchestrator then applies various rules to this information to determine
+the overall true state of the TV and its inputs, and publishes this state to
+MQTT for consumption by other services such as Loxone, Node-Red or
+Home Assistant.
+
+The state is published as JSON messages to the tvaux/state topic for the
+overall state (playback etc.) and tvaux/devices for individual device states.
+
+Configuration is loaded from a human-edited TOML file. See
+`tv_orchestrator.example.toml` for the current shape.
