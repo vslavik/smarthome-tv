@@ -7,6 +7,7 @@ from pathlib import Path
 import signal
 import sys
 import tomllib
+from typing import Literal
 
 import msgspec
 import paho.mqtt.client as mqtt
@@ -25,6 +26,8 @@ CEC_ACTIVE_TOPIC = "tvaux/cec/active"
 CEC_DEVICE_TOPIC_PREFIX = "tvaux/cec/device/"
 PS5_STATE_TOPIC = "tvaux/ps5/ddp/state"
 ANDROIDTV_STATE_TOPIC = "tvaux/androidtv/state"
+SYSTEM_STATE_TOPIC = "tvaux/state"
+DEVICE_STATE_TOPIC_PREFIX = "tvaux/devices/"
 
 TV_LOGICAL_ADDRESS = 0
 AVR_LOGICAL_ADDRESS = 5
@@ -101,6 +104,64 @@ def load_config(path: Path) -> OrchestratorConfig:
     return config
 
 
+class TrackedDevice(msgspec.Struct):
+    id: str
+    power: Literal["on", "off", "standby", "unavailable"] = "unavailable"
+
+    def publish_to_json(self) -> bytes:
+        return msgspec.json.encode(self)
+
+
+class TrackedState(msgspec.Struct):
+    state: Literal["off", "idle", "playback", "paused", "gaming"] = "off"
+    active_source: TrackedDevice | None = None
+
+    def publish_to_json(self) -> bytes:
+        return msgspec.json.encode({
+            "state": self.state,
+            "active_source": self.active_source.id if self.active_source else None,
+        })
+
+
+class DevicesManager:
+    def __init__(self, config: OrchestratorConfig) -> None:
+        self.config = config
+        self.cec_devices: dict[int, TrackedDevice] = {}
+        self.ps5: TrackedDevice | None = None
+        self.androidtv: TrackedDevice | None = None
+
+    def match(self, cec: CecDevice) -> TrackedDevice:
+        dev = self.cec_devices.get(cec.logical_address)
+        if dev is None:
+            devid, cfg = self._find_config(cec)
+            if not devid:
+                devid = ''
+                if cec.vendor:
+                    devid = cec.vendor.lower() + '-'
+                if cec.osd_name:
+                    devid += cec.osd_name.lower()
+                if not devid:
+                    devid = f"cec-{cec.logical_address}"
+
+            logger.info(f"discovered device '{devid}' at logical address {cec.logical_address}")
+            dev = TrackedDevice(id=devid)
+            self.cec_devices[cec.logical_address] = dev
+            if cfg and cfg.ps5_host:
+                self.ps5 = dev
+            if cfg and cfg.androidtv_host:
+                self.androidtv = dev
+
+        return dev
+
+    def _find_config(self, cec: CecDevice):
+        for id, cfg in self.config.devices.items():
+            if cfg.cec_logical_address == cec.logical_address:
+                return id, cfg
+            elif cfg.cec_osd_name and cfg.cec_osd_name == cec.osd_name:
+                return id, cfg
+        return None, None
+
+
 class Orchestrator:
     def __init__(self, *, mqtt_host: str, mqtt_port: int, config: OrchestratorConfig) -> None:
         self.mqtt_host = mqtt_host
@@ -111,6 +172,8 @@ class Orchestrator:
         self.mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
         self.mqtt.on_connect = self.on_connect
         self.mqtt.on_message = self.on_message
+        self.devices = DevicesManager(config)
+        self.state = TrackedState()
 
     def stop(self, *_args: object) -> None:
         self.stopped = True
@@ -155,15 +218,45 @@ class Orchestrator:
 
     def handle_cec_source_change(self, event: CecEvent) -> None:
         logger.info("TODO handle CEC source change: %s", event)
+        if event.device is None:
+            self.state.active_source = None
+        else:
+            dev = self.devices.match(event.device)
+            self.state.active_source = dev
+        self.publish_system_state()
 
     def handle_cec_power(self, event: CecEvent) -> None:
-        logger.info("TODO handle CEC power event: %s", event)
+        dev = self.devices.match(event.device)
+        if dev.power != event.device.power_status:
+            dev.power = event.device.power_status
+            self.handle_power_change(dev)
 
-    def handle_ps5_state(self, state: PS5StateEvent) -> None:
-        logger.info("TODO handle PS5 state event: %s", state)
+    def handle_ps5_state(self, event: PS5StateEvent) -> None:
+        if not self.devices.ps5:
+            return
+        if event.state != self.devices.ps5.power:
+            self.devices.ps5.power = event.state
+            self.handle_power_change(self.devices.ps5)
 
-    def handle_androidtv_state(self, state: AndroidTVStateEvent) -> None:
-        logger.info("TODO handle Android TV state event: %s", state)
+    def handle_androidtv_state(self, event: AndroidTVStateEvent) -> None:
+        if not self.devices.androidtv:
+            return
+        if self.state.active_source != self.devices.androidtv:
+            return  # updates are not relevant if Android TV is not the active source
+        logger.info("TODO handle Android TV state event: %s", event)
+
+    def handle_power_change(self, device: TrackedDevice) -> None:
+        # TODO: if active source goes off/standby, implies deactivation of source, possibly need to turn tv off
+        # TODO: tv going on/off indicates primary state change
+        self.publish_device_state(device)
+
+    def publish_system_state(self) -> None:
+        payload = self.state.publish_to_json()
+        self.mqtt.publish(SYSTEM_STATE_TOPIC, payload, qos=1, retain=True)
+
+    def publish_device_state(self, device: TrackedDevice) -> None:
+        payload = device.publish_to_json()
+        self.mqtt.publish(f"{DEVICE_STATE_TOPIC_PREFIX}{device.id}", payload, qos=1, retain=True)
 
     def run(self) -> int:
         logger.info(
