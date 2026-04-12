@@ -275,7 +275,7 @@ class CECClient:
         if device_id is None:
             device_id = cec.CECDEVICE_BROADCAST
 
-        if device_id <= 0 or device_id > cec.CECDEVICE_BROADCAST:
+        if device_id < 0 or device_id > cec.CECDEVICE_BROADCAST:
             logger.warning('Ignoring standby for invalid device_id %r', device_id)
             return
 
