@@ -126,15 +126,30 @@ class TrackedState(msgspec.Struct):
 class DevicesManager:
     def __init__(self, config: OrchestratorConfig) -> None:
         self.config = config
-        self.cec_devices: dict[int, TrackedDevice] = {}
+        self.by_id = {
+            device_id: TrackedDevice(id=device_id)
+            for device_id in config.devices
+        }
+        self._cec_devices: dict[int, TrackedDevice] = {}
         self.ps5: TrackedDevice | None = None
         self.androidtv: TrackedDevice | None = None
+        self.tv: TrackedDevice | None = self.by_id.get("tv")
+        self.avr: TrackedDevice | None = self.by_id.get("avr")
+
+        for device_id, cfg in config.devices.items():
+            dev = self.by_id[device_id]
+            if cfg.ps5_host:
+                self.ps5 = dev
+            if cfg.androidtv_host:
+                self.androidtv = dev
 
     def match(self, cec: CecDevice) -> TrackedDevice:
-        dev = self.cec_devices.get(cec.logical_address)
+        dev = self._cec_devices.get(cec.logical_address)
         if dev is None:
-            devid, cfg = self._find_config(cec)
-            if not devid:
+            devid, cfg = self._find_device_config(cec)
+            if devid:
+                dev = self.by_id[devid]
+            else:
                 devid = ''
                 if cec.vendor:
                     devid = cec.vendor.lower() + '-'
@@ -142,18 +157,15 @@ class DevicesManager:
                     devid += cec.osd_name.lower()
                 if not devid:
                     devid = f"cec-{cec.logical_address}"
+                dev = TrackedDevice(id=devid)
+                self.by_id[devid] = dev
 
             logger.info(f"discovered device '{devid}' at logical address {cec.logical_address}")
-            dev = TrackedDevice(id=devid)
-            self.cec_devices[cec.logical_address] = dev
-            if cfg and cfg.ps5_host:
-                self.ps5 = dev
-            if cfg and cfg.androidtv_host:
-                self.androidtv = dev
+            self._cec_devices[cec.logical_address] = dev
 
         return dev
 
-    def _find_config(self, cec: CecDevice):
+    def _find_device_config(self, cec: CecDevice):
         for id, cfg in self.config.devices.items():
             if cfg.cec_logical_address == cec.logical_address:
                 return id, cfg
