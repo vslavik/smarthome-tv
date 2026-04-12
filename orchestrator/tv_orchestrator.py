@@ -28,6 +28,7 @@ PS5_STATE_TOPIC = "tvaux/ps5/ddp/state"
 ANDROIDTV_STATE_TOPIC = "tvaux/androidtv/state"
 SYSTEM_STATE_TOPIC = "tvaux/state"
 DEVICE_STATE_TOPIC_PREFIX = "tvaux/devices/"
+CEC_COMMAND_TOPIC = "tvaux/cec/command"
 
 TV_LOGICAL_ADDRESS = 0
 AVR_LOGICAL_ADDRESS = 5
@@ -44,6 +45,11 @@ class CecDevice(msgspec.Struct):
     kind: str | None
     physical_address: str
     vendor: str | None
+
+
+class CecCommand(msgspec.Struct):
+    action: str
+    device_id: int | None = None
 
 
 class CecEvent(msgspec.Struct):
@@ -191,6 +197,10 @@ class RuntimeSystemState:
         })
 
 
+class TurnOffTvFixup(msgspec.Struct):
+    pass
+
+
 class Orchestrator:
     def __init__(self, *, mqtt_host: str, mqtt_port: int, config: OrchestratorConfig) -> None:
         self.mqtt_host = mqtt_host
@@ -203,6 +213,7 @@ class Orchestrator:
         self.mqtt.on_message = self.on_message
         self.devices = DevicesManager(config)
         self.state = RuntimeSystemState(self.devices)
+        self.turn_off_tv_fixup_pending = False
 
     def stop(self, *_args: object) -> None:
         self.stopped = True
@@ -242,6 +253,8 @@ class Orchestrator:
                 self.handle_ps5_state(event)
             case AndroidTVStateEvent():
                 self.handle_androidtv_state(event)
+            case TurnOffTvFixup():
+                self.handle_turn_off_tv_fixup()
             case _:
                 raise TypeError(f"unexpected event: {event!r}")
 
@@ -285,6 +298,38 @@ class Orchestrator:
             self.publish_system_state()
         elif device is self.devices.tv:
             self.publish_system_state()
+
+        if device.id in self.config.monitor_devices and device.power in ("off", "standby"):
+            self.schedule_turn_off_tv_fixup()
+
+    def schedule_turn_off_tv_fixup(self) -> None:
+        if self.turn_off_tv_fixup_pending:
+            return
+        if not self.should_turn_off_tv():
+            return
+
+        self.turn_off_tv_fixup_pending = True
+        self.queue.put(TurnOffTvFixup(), delay=2.5)
+
+    def handle_turn_off_tv_fixup(self) -> None:
+        self.turn_off_tv_fixup_pending = False
+        if not self.should_turn_off_tv():
+            return
+
+        logger.info("All monitored devices are off; turning TV off")
+        command = CecCommand(action="standby", device_id=TV_LOGICAL_ADDRESS)
+        self.mqtt.publish(CEC_COMMAND_TOPIC, msgspec.json.encode(command), qos=1)
+
+    def should_turn_off_tv(self) -> bool:
+        if not self.devices.tv or self.devices.tv.power != "on":
+            return False
+
+        for device_id in self.config.monitor_devices:
+            device = self.devices.by_id[device_id]
+            if device.power not in ("off", "standby"):
+                return False
+
+        return True
 
     def publish_system_state(self) -> None:
         payload = self.state.publish_to_json()
