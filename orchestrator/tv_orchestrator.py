@@ -9,12 +9,22 @@ import sys
 import tomllib
 
 import msgspec
+import paho.mqtt.client as mqtt
+
+from scheduled_queue import ScheduledQueue
 
 
 logger = logging.getLogger(__name__)
 
 
 DEFAULT_MQTT_PORT = 1883
+MQTT_KEEPALIVE = 30
+QUEUE_TIMEOUT = 0.2
+
+CEC_ACTIVE_TOPIC = "tvaux/cec/active"
+CEC_DEVICE_TOPIC_PREFIX = "tvaux/cec/device/"
+PS5_STATE_TOPIC = "tvaux/ps5/ddp/state"
+ANDROIDTV_STATE_TOPIC = "tvaux/androidtv/state"
 
 TV_LOGICAL_ADDRESS = 0
 AVR_LOGICAL_ADDRESS = 5
@@ -96,11 +106,39 @@ class Orchestrator:
         self.mqtt_host = mqtt_host
         self.mqtt_port = mqtt_port
         self.config = config
+        self.queue = ScheduledQueue()
         self.stopped = False
+        self.mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+        self.mqtt.on_connect = self.on_connect
+        self.mqtt.on_message = self.on_message
 
     def stop(self, *_args: object) -> None:
         self.stopped = True
         logger.info("stopping orchestrator")
+
+    def on_connect(self, client, userdata, flags, reason_code, properties=None) -> None:
+        client.subscribe(CEC_ACTIVE_TOPIC, qos=1)
+        client.subscribe(f"{CEC_DEVICE_TOPIC_PREFIX}+", qos=1)
+        client.subscribe(PS5_STATE_TOPIC, qos=1)
+        client.subscribe(ANDROIDTV_STATE_TOPIC, qos=1)
+        logger.info("subscribed to orchestrator MQTT topics")
+
+    def on_message(self, client, userdata, msg) -> None:
+        try:
+            if msg.topic == CEC_ACTIVE_TOPIC or msg.topic.startswith(CEC_DEVICE_TOPIC_PREFIX):
+                event = msgspec.json.decode(msg.payload, type=CecEvent)
+            elif msg.topic == PS5_STATE_TOPIC:
+                event = msgspec.json.decode(msg.payload, type=PS5StateEvent)
+            elif msg.topic == ANDROIDTV_STATE_TOPIC:
+                event = msgspec.json.decode(msg.payload, type=AndroidTVStateEvent)
+            else:
+                logger.warning("ignoring message on unexpected topic %s", msg.topic)
+                return
+        except msgspec.MsgspecError as error:
+            logger.warning("ignoring invalid payload on %s: %s", msg.topic, error)
+            return
+
+        self.queue.put(event)
 
     def handle(self, event: object) -> None:
         match event:
@@ -116,16 +154,16 @@ class Orchestrator:
                 raise TypeError(f"unexpected event: {event!r}")
 
     def handle_cec_source_change(self, event: CecEvent) -> None:
-        raise NotImplementedError
+        logger.info("TODO handle CEC source change: %s", event)
 
     def handle_cec_power(self, event: CecEvent) -> None:
-        raise NotImplementedError
+        logger.info("TODO handle CEC power event: %s", event)
 
     def handle_ps5_state(self, state: PS5StateEvent) -> None:
-        raise NotImplementedError
+        logger.info("TODO handle PS5 state event: %s", state)
 
     def handle_androidtv_state(self, state: AndroidTVStateEvent) -> None:
-        raise NotImplementedError
+        logger.info("TODO handle Android TV state event: %s", state)
 
     def run(self) -> int:
         logger.info(
@@ -138,6 +176,18 @@ class Orchestrator:
 
         for device_id in sorted(self.config.devices):
             logger.info("device %s: %s", device_id, self.config.devices[device_id])
+
+        self.mqtt.connect(self.mqtt_host, self.mqtt_port, keepalive=MQTT_KEEPALIVE)
+        self.mqtt.loop_start()
+
+        try:
+            while not self.stopped:
+                event = self.queue.get(timeout=QUEUE_TIMEOUT)
+                if event is not None:
+                    self.handle(event)
+        finally:
+            self.mqtt.loop_stop()
+            self.mqtt.disconnect()
 
         return 0
 
