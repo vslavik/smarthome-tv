@@ -107,19 +107,12 @@ def load_config(path: Path) -> OrchestratorConfig:
 class TrackedDevice(msgspec.Struct):
     id: str
     power: Literal["on", "off", "standby", "unavailable"] = "unavailable"
-
-    def publish_to_json(self) -> bytes:
-        return msgspec.json.encode(self)
-
-
-class TrackedState(msgspec.Struct):
-    state: Literal["off", "idle", "playback", "paused", "gaming"] = "off"
-    active_source: TrackedDevice | None = None
+    playback_state: Literal["idle", "playback", "paused"] | None = None
 
     def publish_to_json(self) -> bytes:
         return msgspec.json.encode({
-            "state": self.state,
-            "active_source": self.active_source.id if self.active_source else None,
+            "id": self.id,
+            "power": self.power,
         })
 
 
@@ -174,6 +167,30 @@ class DevicesManager:
         return None, None
 
 
+class RuntimeSystemState:
+    def __init__(self, devices: DevicesManager) -> None:
+        self.dev = devices
+        self.active_source: TrackedDevice | None = None
+
+    @property
+    def state(self) -> Literal["off", "idle", "playback", "paused", "gaming"]:
+        if self.dev.tv.power in ("off", "standby"):
+            return "off"
+        if self.active_source is None or self.active_source.power != "on":
+            return "idle"
+        if self.active_source == self.dev.ps5:
+            return "gaming"
+        if self.active_source == self.dev.androidtv:
+            return self.dev.androidtv.playback_state or "idle"
+        return "idle"
+
+    def publish_to_json(self) -> bytes:
+        return msgspec.json.encode({
+            "state": self.state,
+            "source": self.active_source.id if self.active_source else None,
+        })
+
+
 class Orchestrator:
     def __init__(self, *, mqtt_host: str, mqtt_port: int, config: OrchestratorConfig) -> None:
         self.mqtt_host = mqtt_host
@@ -185,7 +202,7 @@ class Orchestrator:
         self.mqtt.on_connect = self.on_connect
         self.mqtt.on_message = self.on_message
         self.devices = DevicesManager(config)
-        self.state = TrackedState()
+        self.state = RuntimeSystemState(self.devices)
 
     def stop(self, *_args: object) -> None:
         self.stopped = True
@@ -229,7 +246,6 @@ class Orchestrator:
                 raise TypeError(f"unexpected event: {event!r}")
 
     def handle_cec_source_change(self, event: CecEvent) -> None:
-        logger.info("TODO handle CEC source change: %s", event)
         if event.device is None:
             self.state.active_source = None
         else:
@@ -253,14 +269,22 @@ class Orchestrator:
     def handle_androidtv_state(self, event: AndroidTVStateEvent) -> None:
         if not self.devices.androidtv:
             return
-        if self.state.active_source != self.devices.androidtv:
-            return  # updates are not relevant if Android TV is not the active source
-        logger.info("TODO handle Android TV state event: %s", event)
+
+        if event.state and event.state != "unavailable" and event.state != self.devices.androidtv.playback_state:
+            self.devices.androidtv.playback_state = event.state
+        else:
+            self.devices.androidtv.playback_state = None
+
+        if self.state.active_source == self.devices.androidtv:
+            self.publish_system_state()
 
     def handle_power_change(self, device: TrackedDevice) -> None:
-        # TODO: if active source goes off/standby, implies deactivation of source, possibly need to turn tv off
-        # TODO: tv going on/off indicates primary state change
         self.publish_device_state(device)
+        if device is self.state.active_source:
+            self.state.active_source = None
+            self.publish_system_state()
+        elif device is self.devices.tv:
+            self.publish_system_state()
 
     def publish_system_state(self) -> None:
         payload = self.state.publish_to_json()
