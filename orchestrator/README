@@ -16,6 +16,8 @@ the overall true state of the TV and its inputs, and publishes this state to
 MQTT for consumption by other services such as Loxone, Node-Red or
 Home Assistant.
 
+The raw per-service feeds it consumes live under `tvaux/internal/...`.
+
 The state is published as JSON messages to the tvaux/state topic for the
 overall state (playback etc.) and tvaux/devices for individual device states.
 

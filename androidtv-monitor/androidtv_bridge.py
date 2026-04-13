@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 MQTT_PORT = 1883
 MQTT_KEEPALIVE = 30
-MQTT_STATE_TOPIC = "tvaux/androidtv/state"
-MQTT_COMMAND_TOPIC = "tvaux/androidtv/command"
+MQTT_STATE_TOPIC = "tvaux/internal/androidtv/state"
+MQTT_COMMAND_TOPIC = "tvaux/internal/androidtv/command"
 
 DEFAULT_PORT = 5555
 DEFAULT_POLL_INTERVAL = 2.0

@@ -16,7 +16,7 @@ MQTT_HOST = os.getenv('MQTT_HOST')
 
 MQTT_PORT = 1883
 MQTT_KEEPALIVE = 30
-MQTT_STATE_TOPIC = "tvaux/fans/state"
+MQTT_STATE_TOPIC = "tvaux/internal/fans/state"
 
 
 logging.basicConfig(

@@ -65,12 +65,12 @@ scan or poll failed.
 MQTT Shape
 ----------
 
-Topics are under `tvaux/cec/`.
+Topics are under `tvaux/internal/cec/`.
 
 Current retained topics:
 
-- `tvaux/cec/device/{id}`
-- `tvaux/cec/active`
+- `tvaux/internal/cec/device/{id}`
+- `tvaux/internal/cec/active`
 
 Payloads are JSON and currently use:
 

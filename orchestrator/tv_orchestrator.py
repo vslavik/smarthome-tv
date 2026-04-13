@@ -22,13 +22,13 @@ DEFAULT_MQTT_PORT = 1883
 MQTT_KEEPALIVE = 30
 QUEUE_TIMEOUT = 0.2
 
-CEC_ACTIVE_TOPIC = "tvaux/cec/active"
-CEC_DEVICE_TOPIC_PREFIX = "tvaux/cec/device/"
-PS5_STATE_TOPIC = "tvaux/ps5/ddp/state"
-ANDROIDTV_STATE_TOPIC = "tvaux/androidtv/state"
+CEC_ACTIVE_TOPIC = "tvaux/internal/cec/active"
+CEC_DEVICE_TOPIC_PREFIX = "tvaux/internal/cec/device/"
+PS5_STATE_TOPIC = "tvaux/internal/ps5/ddp"
+ANDROIDTV_STATE_TOPIC = "tvaux/internal/androidtv/state"
 SYSTEM_STATE_TOPIC = "tvaux/state"
 DEVICE_STATE_TOPIC_PREFIX = "tvaux/devices/"
-CEC_COMMAND_TOPIC = "tvaux/cec/command"
+CEC_COMMAND_TOPIC = "tvaux/internal/cec/command"
 
 TV_LOGICAL_ADDRESS = 0
 AVR_LOGICAL_ADDRESS = 5

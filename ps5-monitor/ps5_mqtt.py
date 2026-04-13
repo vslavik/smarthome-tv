@@ -22,8 +22,8 @@ IDLE_SLEEP = 0.2
 # PS5 goes into non-responding state during on<->standby transition, so we wait a bit before declaring it off
 OFF_DELAY = 15.0
 
-MQTT_STATE_TOPIC     = "tvaux/ps5/ddp/state"
-MQTT_COMMAND_TOPIC   = "tvaux/ps5/ddp/command"
+MQTT_STATE_TOPIC     = "tvaux/internal/ps5/ddp"
+MQTT_COMMAND_TOPIC   = "tvaux/internal/ps5/command"
 
 
 logging.basicConfig(
