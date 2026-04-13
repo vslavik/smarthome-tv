@@ -114,6 +114,11 @@ class TrackedDevice(msgspec.Struct):
     id: str
     power: Literal["on", "off", "standby", "unavailable"] = "unavailable"
     playback_state: Literal["idle", "playback", "paused"] | None = None
+    host: str | None = None
+
+    @property
+    def is_on(self) -> bool:
+        return self.power == "on"
 
     def publish_to_json(self) -> bytes:
         return msgspec.json.encode({
@@ -180,9 +185,9 @@ class RuntimeSystemState:
 
     @property
     def state(self) -> Literal["off", "idle", "playback", "paused", "gaming"]:
-        if self.dev.tv.power in ("off", "standby"):
+        if not self.dev.tv.is_on:
             return "off"
-        if self.active_source is None or self.active_source.power != "on":
+        if self.active_source is None or not self.active_source.is_on:
             return "idle"
         if self.active_source == self.dev.ps5:
             return "gaming"
@@ -295,7 +300,7 @@ class Orchestrator:
     def handle_power_change(self, device: TrackedDevice) -> None:
         self.publish_device_state(device)
 
-        if device.power != "on" and device is self.state.active_source:
+        if not device.is_on and device is self.state.active_source:
             self.state.active_source = None
             self.publish_system_state()
 
@@ -324,12 +329,12 @@ class Orchestrator:
         self.mqtt.publish(CEC_COMMAND_TOPIC, msgspec.json.encode(command), qos=1)
 
     def should_turn_off_tv(self) -> bool:
-        if not self.devices.tv or self.devices.tv.power != "on":
+        if not self.devices.tv or not self.devices.tv.is_on:
             return False
 
         for device_id in self.config.monitor_devices:
             device = self.devices.by_id[device_id]
-            if device.power not in ("off", "standby"):
+            if device.is_on:
                 return False
 
         return True
