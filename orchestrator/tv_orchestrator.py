@@ -283,20 +283,23 @@ class Orchestrator:
         if not self.devices.androidtv:
             return
 
-        if event.state and event.state != "unavailable" and event.state != self.devices.androidtv.playback_state:
-            self.devices.androidtv.playback_state = event.state
-        else:
-            self.devices.androidtv.playback_state = None
+        if event.state != self.devices.androidtv.playback_state:
+            if event.state and event.state != "unavailable":
+                self.devices.androidtv.playback_state = event.state
+            else:
+                self.devices.androidtv.playback_state = None
 
         if self.state.active_source == self.devices.androidtv:
             self.publish_system_state()
 
     def handle_power_change(self, device: TrackedDevice) -> None:
         self.publish_device_state(device)
-        if device is self.state.active_source:
+
+        if device.power != "on" and device is self.state.active_source:
             self.state.active_source = None
             self.publish_system_state()
-        elif device is self.devices.tv:
+
+        if device is self.devices.tv:
             self.publish_system_state()
 
         if device.id in self.config.monitor_devices and device.power in ("off", "standby"):
