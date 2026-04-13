@@ -143,8 +143,10 @@ class DevicesManager:
         for device_id, cfg in config.devices.items():
             dev = self.by_id[device_id]
             if cfg.ps5_host:
+                dev.host = cfg.ps5_host
                 self.ps5 = dev
             if cfg.androidtv_host:
+                dev.host = cfg.androidtv_host
                 self.androidtv = dev
 
     def match(self, cec: CecDevice) -> TrackedDevice:
@@ -202,8 +204,13 @@ class RuntimeSystemState:
         })
 
 
-class TurnOffTvFixup(msgspec.Struct):
+class TurnOffTvFixupEvent(msgspec.Struct):
     pass
+
+
+class AuxServicePauseEvent(msgspec.Struct):
+    service: str
+    device: TrackedDevice
 
 
 class Orchestrator:
@@ -258,8 +265,10 @@ class Orchestrator:
                 self.handle_ps5_state(event)
             case AndroidTVStateEvent():
                 self.handle_androidtv_state(event)
-            case TurnOffTvFixup():
+            case TurnOffTvFixupEvent():
                 self.handle_turn_off_tv_fixup()
+            case AuxServicePauseEvent():
+                self.handle_aux_service_pause_event(event)
             case _:
                 raise TypeError(f"unexpected event: {event!r}")
 
@@ -307,8 +316,47 @@ class Orchestrator:
         if device is self.devices.tv:
             self.publish_system_state()
 
-        if device.id in self.config.monitor_devices and device.power in ("off", "standby"):
+        if device.is_on:
+            self.start_aux_services(device)
+        else:
+            self.stop_aux_services(device)
+
+        if device.id in self.config.monitor_devices and not device.is_on:
             self.schedule_turn_off_tv_fixup()
+
+    def handle_aux_service_pause_event(self, event: AuxServicePauseEvent) -> None:
+        if event.device.is_on:
+            logger.info(f"cancelled stopping aux service {event.service}, device {event.device.id} is on again")
+            return
+        logger.info(f"stopping aux service {event.service}")
+        self._send_aux_service_command(event.service, "pause", event.device)
+
+    def start_aux_services(self, turned_device: TrackedDevice) -> None:
+        if turned_device is self.devices.ps5:
+            self.start_aux_service("ps5", turned_device)
+        if turned_device is self.devices.androidtv:
+            self.start_aux_service("androidtv", turned_device)
+
+    def stop_aux_services(self, turned_device: TrackedDevice) -> None:
+        if turned_device is self.devices.ps5:
+            self.stop_aux_service("ps5", self.devices.ps5, delay=30)
+        if turned_device is self.devices.androidtv:
+            self.stop_aux_service("androidtv", self.devices.androidtv, delay=30)
+
+    def start_aux_service(self, service: str, device: TrackedDevice) -> None:
+        logger.info(f"starting aux service {service}")
+        self._send_aux_service_command(service, "monitor", device)
+
+    def stop_aux_service(self, service: str, device: TrackedDevice, delay: float) -> None:
+        logger.info(f"scheduling stop for aux service {service} after {delay} seconds")
+        self.queue.put(AuxServicePauseEvent(service=service, device=device), delay=delay)
+
+    def _send_aux_service_command(self, service: str, action: str, device: TrackedDevice) -> None:
+        data = {
+            "action": action,
+            "host": device.host
+        }
+        self.mqtt.publish(f"tvaux/internal/{service}/command", msgspec.json.encode(data), qos=1)
 
     def schedule_turn_off_tv_fixup(self) -> None:
         if self.turn_off_tv_fixup_pending:
@@ -317,7 +365,7 @@ class Orchestrator:
             return
 
         self.turn_off_tv_fixup_pending = True
-        self.queue.put(TurnOffTvFixup(), delay=2.5)
+        self.queue.put(TurnOffTvFixupEvent(), delay=2.5)
 
     def handle_turn_off_tv_fixup(self) -> None:
         self.turn_off_tv_fixup_pending = False
