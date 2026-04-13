@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 
+import argparse
 import json
 import logging
 import os
 from queue import Empty, SimpleQueue
 import signal
+import sys
 import time
 from dataclasses import dataclass
 
@@ -32,13 +34,6 @@ logging.basicConfig(
 )
 
 
-def required_env(name):
-    value = os.getenv(name)
-    if value:
-        return value
-    raise SystemExit(f"{name} is required")
-
-
 @dataclass
 class BridgeState:
     paused: bool = False
@@ -49,7 +44,7 @@ class BridgeState:
 
 
 class Ps5MqttBridge:
-    def __init__(self, ps5_host, mqtt_host):
+    def __init__(self, *, ps5_host: str, mqtt_host: str):
         self.ps5_host = ps5_host
         self.state = BridgeState()
         self.commands = SimpleQueue()
@@ -98,7 +93,7 @@ class Ps5MqttBridge:
         if result["state"] != self.state.published_state:
             self.publish_state(result["state"], result)
 
-    def run(self):
+    def run(self) -> int:
         self.client.loop_start()
         signal.signal(signal.SIGINT, self.stop)
         signal.signal(signal.SIGTERM, self.stop)
@@ -129,18 +124,37 @@ class Ps5MqttBridge:
             self.client.loop_stop()
             self.client.disconnect()
 
+        return 0
+
     def stop(self, *_args):
         self.state.stopped = True
         logging.info("stopping bridge")
 
 
-def main():
-    bridge = Ps5MqttBridge(
-        ps5_host=required_env("PS5_HOST"),
-        mqtt_host=required_env("MQTT_HOST"),
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", default=os.getenv("PS5_HOST"), help="IP address or hostname of the PS5")
+    parser.add_argument("--mqtt-host", default=os.getenv("MQTT_HOST"), help="IP address or hostname of the MQTT broker")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+
+    args = parser.parse_args()
+
+    if not args.host:
+        raise SystemExit("--host or PS5_HOST is required")
+    if not args.mqtt_host:
+        raise SystemExit("--mqtt-host or MQTT_HOST is required")
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.debug else logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
     )
-    bridge.run()
+
+    bridge = Ps5MqttBridge(
+        ps5_host=args.host,
+        mqtt_host=args.mqtt_host,
+    )
+    return bridge.run()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
