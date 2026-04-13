@@ -7,6 +7,7 @@ from queue import Empty, SimpleQueue
 import signal
 import sys
 import time
+from typing import Literal
 
 import msgspec
 import paho.mqtt.client as mqtt
@@ -27,21 +28,29 @@ DEFAULT_POLL_INTERVAL = 2.0
 IDLE_SLEEP = 0.2
 
 
+class MonitorCommand(msgspec.Struct):
+    action: Literal["monitor", "pause"]
+    host: str | None = None
+
+
 class AndroidTVMqttBridge:
     def __init__(
         self,
         *,
-        host: str,
+        host: str | None,
         port: int,
         adbkey: str,
         mqtt_host: str,
         poll_interval: float,
     ) -> None:
-        self.monitor = AndroidTVMonitor(host=host, port=port, adbkey=adbkey)
+        self.host = host
+        self.port = port
+        self.adbkey = adbkey
+        self.monitor: AndroidTVMonitor | None = None
         self.poll_interval = poll_interval
-        self.commands: SimpleQueue[str] = SimpleQueue()
+        self.commands: SimpleQueue[MonitorCommand] = SimpleQueue()
         self.encoder = msgspec.json.Encoder()
-        self.paused = False
+        self.paused = True
         self.stopped = False
         self.next_poll_at = 0.0
         self.last_state = None
@@ -51,30 +60,83 @@ class AndroidTVMqttBridge:
         self.client.on_message = self.on_message
         self.client.connect(mqtt_host, MQTT_PORT, keepalive=MQTT_KEEPALIVE)
 
+        if host is not None:
+            self.start_monitoring(host)
+
     def on_connect(self, client, userdata, flags, reason_code, properties=None):
         client.subscribe(MQTT_COMMAND_TOPIC, qos=1)
 
     def on_message(self, client, userdata, msg):
-        command = msg.payload.decode("utf-8", "replace").strip().lower()
+        try:
+            command = msgspec.json.decode(msg.payload, type=MonitorCommand)
+        except msgspec.DecodeError:
+            logger.warning("ignoring invalid command payload on %s: %r", msg.topic, msg.payload)
+            return
         self.commands.put(command)
 
     def stop(self, *_args: object) -> None:
         self.stopped = True
-        logger.info("stopping bridge")
+        logger.info("stopping Android TV bridge (host=%s)", self.host or "none")
 
-    def handle_command(self, command: str) -> None:
-        if command == "stop":
-            self.paused = True
-            logger.info("received command stop")
+    def start_monitoring(self, host: str) -> None:
+        host = host.strip()
+        if not host:
+            logger.warning("ignoring monitor request with empty host")
             return
 
-        if command == "start":
-            self.paused = False
-            self.next_poll_at = 0.0
-            logger.info("received command start")
+        previous_host = self.host
+        host_changed = host != previous_host
+        was_paused = self.paused
+
+        if not was_paused and not host_changed:
+            logger.info("Android TV monitoring already active for host %s", host)
             return
 
-        logger.warning("ignoring unknown command %r", command)
+        if host_changed and self.monitor is not None:
+            logger.info("switching Android TV monitoring host from %s to %s", previous_host, host)
+            self.monitor.close()
+            self.monitor = None
+
+        if self.monitor is None:
+            self.monitor = AndroidTVMonitor(host=host, port=self.port, adbkey=self.adbkey)
+
+        self.host = host
+        self.paused = False
+        self.next_poll_at = 0.0
+
+        if was_paused or host_changed:
+            self.last_state = None
+
+        if host_changed and previous_host is not None:
+            logger.info("starting Android TV monitoring for host %s", host)
+        elif was_paused:
+            logger.info("starting Android TV monitoring for host %s", host)
+
+    def pause_monitoring(self) -> None:
+        if self.paused:
+            logger.info("Android TV monitoring already paused (host=%s)", self.host or "none")
+            return
+
+        self.paused = True
+        self.next_poll_at = 0.0
+        self.last_state = None
+        if self.monitor is not None:
+            self.monitor.close()
+            self.monitor = None
+        logger.info("pausing Android TV monitoring for host %s", self.host or "none")
+
+    def handle_command(self, command: MonitorCommand) -> None:
+        if command.action == "pause":
+            self.pause_monitoring()
+            return
+
+        if command.action == "monitor":
+            target_host = self.host if command.host is None else command.host
+            if target_host is None:
+                logger.warning("ignoring monitor command without a host; no previous host configured")
+                return
+            self.start_monitoring(target_host)
+            return
 
     def publish_state(self, state) -> None:
         self.client.publish(
@@ -88,6 +150,10 @@ class AndroidTVMqttBridge:
         self.client.loop_start()
         signal.signal(signal.SIGINT, self.stop)
         signal.signal(signal.SIGTERM, self.stop)
+        if self.paused:
+            logger.info("starting Android TV bridge in paused state with no host configured")
+        else:
+            logger.info("starting Android TV bridge for host %s", self.host)
 
         try:
             while not self.stopped:
@@ -98,6 +164,12 @@ class AndroidTVMqttBridge:
                     pass
 
                 if self.paused:
+                    time.sleep(IDLE_SLEEP)
+                    continue
+
+                if self.monitor is None:
+                    logger.warning("Android TV monitoring is active but no monitor is configured")
+                    self.pause_monitoring()
                     time.sleep(IDLE_SLEEP)
                     continue
 
@@ -116,7 +188,8 @@ class AndroidTVMqttBridge:
         finally:
             self.client.loop_stop()
             self.client.disconnect()
-            self.monitor.close()
+            if self.monitor is not None:
+                self.monitor.close()
 
         return 0
 
@@ -135,9 +208,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    host = args.host or None
 
-    if not args.host:
-        raise SystemExit("--host or ANDROIDTV_HOST is required")
     if not args.mqtt_host:
         raise SystemExit("--mqtt-host or MQTT_HOST is required")
 
@@ -147,7 +219,7 @@ def main() -> int:
     )
 
     bridge = AndroidTVMqttBridge(
-        host=args.host,
+        host=host,
         port=args.port,
         adbkey=args.adbkey,
         mqtt_host=args.mqtt_host,
