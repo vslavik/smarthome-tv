@@ -6,6 +6,7 @@ import argparse
 import logging
 import os
 from queue import Empty, SimpleQueue
+import re
 import signal
 import time
 from typing import Callable
@@ -23,6 +24,7 @@ MQTT_KEEPALIVE = 30
 MQTT_BASE_TOPIC = 'tvaux/internal/cec'
 MQTT_COMMAND_TOPIC = f'{MQTT_BASE_TOPIC}/command'
 
+CEC_TRAFFIC_LOG_RE = re.compile(r'^(?P<prefix><<|>>) (?P<frame>[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2})*)$')
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +111,9 @@ class CECClient:
         self.config.bActivateSource = 0
         self.config.clientVersion = cec.LIBCEC_VERSION_CURRENT
         self.config.deviceTypes.Add(cec.CEC_DEVICE_TYPE_RECORDING_DEVICE)
-        self.config.SetCommandCallback(self.handle_command)
+        # we intentionally don't use SetCommandCallback which filters out messages not
+        # intended for this device; capturing CEC_LOG_TRAFFIC allows as to see everything:
+        self.config.SetLogCallback(self.handle_traffic_log)
         self.lib = cec.ICECAdapter.Create(self.config)
 
         adapters = self.lib.DetectAdapters()
@@ -122,14 +126,22 @@ class CECClient:
 
         logger.info('Opened adapter %s', port)
 
-    def handle_command(self, cmd) -> int:
-        raw = str(cmd).strip()
-        if not raw.startswith('>> '):
+    def handle_traffic_log(self, level, _time, message) -> int:
+        if level != cec.CEC_LOG_TRAFFIC:
             return 0
 
-        message = parse_command(raw[3:])
-        if message is not None:
-            self.messages.put(message)
+        raw = str(message).strip()
+        match = CEC_TRAFFIC_LOG_RE.fullmatch(raw)
+        if match is None:
+            logger.info('Ignoring unexpected CEC traffic log format: %r', raw)
+            return 0
+
+        parsed = parse_command(match.group('frame'))
+        if parsed is None:
+            logger.info('Ignoring unparseable CEC traffic frame: %r', raw)
+            return 0
+
+        self.messages.put(parsed)
         return 0
 
     def process_message(self, message: CECMessage) -> None:
