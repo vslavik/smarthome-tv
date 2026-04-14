@@ -98,7 +98,6 @@ class CECClient:
         self.active_source_id: int | None = None
         self.active_source_known = False
         self.config: cec.libcec_configuration | None = None
-        self.command_callback = self.handle_command
         self.lib: cec.ICECAdapter | None = None
         self.devices: dict[int, CECDevice] = {}
         self.messages: SimpleQueue[CECMessage] = SimpleQueue()
@@ -110,7 +109,7 @@ class CECClient:
         self.config.bActivateSource = 0
         self.config.clientVersion = cec.LIBCEC_VERSION_CURRENT
         self.config.deviceTypes.Add(cec.CEC_DEVICE_TYPE_RECORDING_DEVICE)
-        self.config.SetCommandCallback(self.command_callback)
+        self.config.SetCommandCallback(self.handle_command)
         self.lib = cec.ICECAdapter.Create(self.config)
 
         adapters = self.lib.DetectAdapters()
@@ -254,8 +253,8 @@ class CECClient:
     def device_label(self, device_id: int) -> str:
         device = self.devices.get(device_id)
         if device is None:
-            return f'{device_id:X}'
-        return f'{device_id:X} ({device.osd_name})'
+            return f'{device_id}'
+        return f'{device_id} ({device.osd_name})'
 
     def process_pending_messages(self) -> None:
         try:
