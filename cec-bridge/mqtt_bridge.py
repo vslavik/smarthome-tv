@@ -171,7 +171,14 @@ class CECClient:
 
         self.active_source_id = device_id
         device = self.devices.get(device_id)
+
         logger.info('Active source is now %s', self.device_label(device_id))
+
+        if device.power_status != 'on':
+            # becoming active implies being powered on
+            device.power_status = 'on'
+            self.publish_device_event(device, 'power')
+
         self.publish(
             f'{MQTT_BASE_TOPIC}/active',
             CECDeviceEvent(event='active-source', device=device),
