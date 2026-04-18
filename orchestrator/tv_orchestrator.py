@@ -28,6 +28,7 @@ PS5_STATE_TOPIC = "tvaux/internal/ps5/ddp"
 ANDROIDTV_STATE_TOPIC = "tvaux/internal/androidtv/state"
 STREAMING_BITRATE_TOPIC = "tvaux/internal/streaming"
 SYSTEM_STATE_TOPIC = "tvaux/state"
+STREAMING_STATE_TOPIC = "tvaux/streaming"
 DEVICE_STATE_TOPIC_PREFIX = "tvaux/devices/"
 CEC_COMMAND_TOPIC = "tvaux/internal/cec/command"
 
@@ -215,8 +216,10 @@ class RuntimeSystemState:
         return msgspec.json.encode({
             "state": self.state,
             "source": self.active_source.id if self.active_source else None,
-            "bitrate": self.bitrate,
         })
+
+    def publish_streaming_to_json(self) -> bytes:
+        return msgspec.json.encode({"bitrate": self.bitrate})
 
 
 class TurnOffTvFixupEvent(msgspec.Struct):
@@ -329,7 +332,7 @@ class Orchestrator:
     def handle_streaming_state(self, event: StreamingStateEvent) -> None:
         self.state.streaming_bitrate = event.bitrate
         if self.state.active_source == self.devices.androidtv:
-            self.publish_system_state()
+            self.publish_streaming_state()
 
     def handle_power_change(self, device: TrackedDevice) -> None:
         self.publish_device_state(device)
@@ -416,6 +419,11 @@ class Orchestrator:
     def publish_system_state(self) -> None:
         payload = self.state.publish_to_json()
         self.mqtt.publish(SYSTEM_STATE_TOPIC, payload, qos=1, retain=True)
+        self.publish_streaming_state()
+
+    def publish_streaming_state(self) -> None:
+        payload = self.state.publish_streaming_to_json()
+        self.mqtt.publish(STREAMING_STATE_TOPIC, payload, qos=1, retain=True)
 
     def publish_device_state(self, device: TrackedDevice) -> None:
         payload = device.publish_to_json()
