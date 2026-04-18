@@ -21,6 +21,7 @@ jobs:
           - service: cec-bridge
           - service: ps5-monitor
           - service: androidtv-monitor
+          - service: streaming-monitor
           - service: orchestrator
     permissions:
       contents: read
