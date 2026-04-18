@@ -26,6 +26,7 @@ CEC_ACTIVE_TOPIC = "tvaux/internal/cec/active"
 CEC_DEVICE_TOPIC_PREFIX = "tvaux/internal/cec/device/"
 PS5_STATE_TOPIC = "tvaux/internal/ps5/ddp"
 ANDROIDTV_STATE_TOPIC = "tvaux/internal/androidtv/state"
+STREAMING_BITRATE_TOPIC = "tvaux/internal/streaming"
 SYSTEM_STATE_TOPIC = "tvaux/state"
 DEVICE_STATE_TOPIC_PREFIX = "tvaux/devices/"
 CEC_COMMAND_TOPIC = "tvaux/internal/cec/command"
@@ -67,6 +68,10 @@ class AndroidTVStateEvent(msgspec.Struct, omit_defaults=True):
     state: str | None
     current_app: str | None
     error: str | None = None
+
+
+class StreamingStateEvent(msgspec.Struct, omit_defaults=True):
+    bitrate: int | None = None
 
 
 class DeviceConfig(msgspec.Struct, kw_only=True):
@@ -184,6 +189,7 @@ class RuntimeSystemState:
     def __init__(self, devices: DevicesManager) -> None:
         self.dev = devices
         self.active_source: TrackedDevice | None = None
+        self.streaming_bitrate: int | None = None
 
     @property
     def state(self) -> Literal["off", "idle", "playback", "paused", "gaming"]:
@@ -197,10 +203,19 @@ class RuntimeSystemState:
             return self.dev.androidtv.playback_state or "idle"
         return "idle"
 
+    @property
+    def bitrate(self) -> int | None:
+        if self.state != "playback":
+            return None
+        if self.streaming_bitrate is None or self.streaming_bitrate <= 0:
+            return None
+        return self.streaming_bitrate
+
     def publish_to_json(self) -> bytes:
         return msgspec.json.encode({
             "state": self.state,
             "source": self.active_source.id if self.active_source else None,
+            "bitrate": self.bitrate,
         })
 
 
@@ -236,6 +251,7 @@ class Orchestrator:
         client.subscribe(f"{CEC_DEVICE_TOPIC_PREFIX}+", qos=1)
         client.subscribe(PS5_STATE_TOPIC, qos=1)
         client.subscribe(ANDROIDTV_STATE_TOPIC, qos=1)
+        client.subscribe(STREAMING_BITRATE_TOPIC, qos=0)
         logger.info("subscribed to orchestrator MQTT topics")
 
     def on_message(self, client, userdata, msg) -> None:
@@ -246,6 +262,8 @@ class Orchestrator:
                 event = msgspec.json.decode(msg.payload, type=PS5StateEvent)
             elif msg.topic == ANDROIDTV_STATE_TOPIC:
                 event = msgspec.json.decode(msg.payload, type=AndroidTVStateEvent)
+            elif msg.topic == STREAMING_BITRATE_TOPIC:
+                event = msgspec.json.decode(msg.payload, type=StreamingStateEvent)
             else:
                 logger.warning("ignoring message on unexpected topic %s", msg.topic)
                 return
@@ -265,6 +283,8 @@ class Orchestrator:
                 self.handle_ps5_state(event)
             case AndroidTVStateEvent():
                 self.handle_androidtv_state(event)
+            case StreamingStateEvent():
+                self.handle_streaming_state(event)
             case TurnOffTvFixupEvent():
                 self.handle_turn_off_tv_fixup()
             case AuxServicePauseEvent():
@@ -306,6 +326,11 @@ class Orchestrator:
         if self.state.active_source == self.devices.androidtv:
             self.publish_system_state()
 
+    def handle_streaming_state(self, event: StreamingStateEvent) -> None:
+        self.state.streaming_bitrate = event.bitrate
+        if self.state.active_source == self.devices.androidtv:
+            self.publish_system_state()
+
     def handle_power_change(self, device: TrackedDevice) -> None:
         self.publish_device_state(device)
 
@@ -336,12 +361,14 @@ class Orchestrator:
             self.start_aux_service("ps5", turned_device)
         if turned_device is self.devices.androidtv:
             self.start_aux_service("androidtv", turned_device)
+            self.start_aux_service("streaming", turned_device)
 
     def stop_aux_services(self, turned_device: TrackedDevice) -> None:
         if turned_device is self.devices.ps5:
             self.stop_aux_service("ps5", self.devices.ps5, delay=30)
         if turned_device is self.devices.androidtv:
             self.stop_aux_service("androidtv", self.devices.androidtv, delay=30)
+            self.stop_aux_service("streaming", self.devices.androidtv, delay=30)
 
     def start_aux_service(self, service: str, device: TrackedDevice) -> None:
         logger.info(f"starting aux service {service}")
@@ -352,10 +379,9 @@ class Orchestrator:
         self.queue.put(AuxServicePauseEvent(service=service, device=device), delay=delay)
 
     def _send_aux_service_command(self, service: str, action: str, device: TrackedDevice) -> None:
-        data = {
-            "action": action,
-            "host": device.host
-        }
+        data = { "action": action }
+        if device.host:
+            data["host"] = device.host
         self.mqtt.publish(f"tvaux/internal/{service}/command", msgspec.json.encode(data), qos=1)
 
     def schedule_turn_off_tv_fixup(self) -> None:
