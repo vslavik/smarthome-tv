@@ -39,5 +39,15 @@ services:
       - ANDROIDTV_HOST=xxx
       - MQTT_HOST=xxx
 
+  streaming:
+    build:
+      context: streaming-monitor
+    restart: unless-stopped
+    environment:
+      - SWITCH_HOST=xxx
+      - MONITORED_PORT=xxx
+      - MQTT_HOST=xxx
+      - SNMP_COMMUNITY=public
+
 volumes:
   config:
