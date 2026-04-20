@@ -95,6 +95,10 @@ def logical_address_kind(logical_address: int) -> str | None:
             return None
 
 
+def should_ignore_logical_address(logical_address: int) -> bool:
+    return logical_address == cec.CECDEVICE_FREEUSE
+
+
 class CECClient:
     def __init__(self, publish: Callable[[str, CECDeviceEvent], None]) -> None:
         self.active_source_id: int | None = None
@@ -139,6 +143,10 @@ class CECClient:
         parsed = parse_command(match.group('frame'))
         if parsed is None:
             logger.info('Ignoring unparseable CEC traffic frame: %r', raw)
+            return 0
+
+        if should_ignore_logical_address(parsed.source):
+            logger.warning('Discarding ghost CEC traffic from logical address %X: %r', parsed.source, raw)
             return 0
 
         self.messages.put(parsed)
@@ -244,6 +252,10 @@ class CECClient:
     def scan_device(self, logical_address: int) -> CECDevice | None:
         if logical_address >= LOGICAL_ADDRESS_COUNT:
             return None
+        if should_ignore_logical_address(logical_address):
+            logger.warning('Discarding ghost scan result on logical address %X', logical_address)
+            return None
+
         addresses = self.lib.GetActiveDevices()
         if not addresses.IsSet(logical_address):
             return None
