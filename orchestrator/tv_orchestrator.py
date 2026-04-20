@@ -164,9 +164,9 @@ class DevicesManager:
             else:
                 devid = ''
                 if cec.vendor:
-                    devid = cec.vendor.lower() + '-'
+                    devid = cec.vendor.lower().replace(' ', '-') + '-'
                 if cec.osd_name:
-                    devid += cec.osd_name.lower()
+                    devid += cec.osd_name.lower().replace(' ', '-')
                 if not devid:
                     devid = f"cec-{cec.logical_address}"
                 dev = TrackedDevice(id=devid)
