@@ -44,8 +44,8 @@ services:
       context: streaming-monitor
     restart: unless-stopped
     environment:
-      - STREAMING_SWITCH_HOST=xxx
-      - STREAMING_MONITORED_PORT=xxx
+      - SWITCH_HOST=xxx
+      - MONITORED_PORT=xxx
       - MQTT_HOST=xxx
       - SNMP_COMMUNITY=public
 

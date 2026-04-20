@@ -190,8 +190,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--switch-host",
-        default=os.getenv("STREAMING_SWITCH_HOST"),
-        help="IP address or hostname of the UniFi switch (default: STREAMING_SWITCH_HOST)",
+        default=os.getenv("SWITCH_HOST"),
+        help="IP address or hostname of the UniFi switch (default: SWITCH_HOST)",
     )
     parser.add_argument(
         "--mqtt-host",
@@ -206,8 +206,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--monitored-port",
         type=int,
-        default=os.getenv("STREAMING_MONITORED_PORT"),
-        help="Physical switch port number to monitor (default: STREAMING_MONITORED_PORT)",
+        default=os.getenv("MONITORED_PORT"),
+        help="Physical switch port number to monitor (default: MONITORED_PORT)",
     )
     parser.add_argument(
         "--debug",
@@ -226,9 +226,9 @@ def main() -> int:
     if not args.mqtt_host:
         raise SystemExit("--mqtt-host or MQTT_HOST is required")
     if not switch_host:
-        raise SystemExit("--switch-host or STREAMING_SWITCH_HOST is required")
+        raise SystemExit("--switch-host or SWITCH_HOST is required")
     if monitored_port is None:
-        raise SystemExit("--monitored-port or STREAMING_MONITORED_PORT is required")
+        raise SystemExit("--monitored-port or MONITORED_PORT is required")
 
     logging.basicConfig(
         level=logging.DEBUG if args.debug else logging.INFO,
