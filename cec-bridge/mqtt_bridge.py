@@ -233,6 +233,7 @@ class CECClient:
             self.lib.Close()
 
     def execute_command(self, command: CECCommand) -> None:
+        logger.info('Executing CEC command %s', command)
         match command.action:
             case 'standby':
                 self.standby(command.device_id)
@@ -309,6 +310,7 @@ class CECClient:
             logger.warning('Ignoring standby for invalid device_id %r', device_id)
             return
 
+        logger.info('Sending standby command to %s', self.device_label(device_id))
         if not self.lib.StandbyDevices(device_id):
             logger.error('Standby command failed for %r', device_id)
 
