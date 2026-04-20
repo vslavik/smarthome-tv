@@ -146,7 +146,7 @@ class CECClient:
             return 0
 
         if should_ignore_logical_address(parsed.source):
-            logger.warning('Discarding ghost CEC traffic from logical address %X: %r', parsed.source, raw)
+            logger.warning('Discarding ghost CEC traffic from logical address %d: %r', parsed.source, raw)
             return 0
 
         self.messages.put(parsed)
@@ -154,7 +154,7 @@ class CECClient:
 
     def process_message(self, message: CECMessage) -> None:
         logger.debug(
-            'CEC message src=%X dst=%X opcode=%s args=%s raw=%r',
+            'CEC message src=%d dst=%d opcode=%s args=%s raw=%r',
             message.source,
             message.destination,
             '--' if message.opcode is None else f'{message.opcode:02X}',
@@ -254,7 +254,7 @@ class CECClient:
         if logical_address >= LOGICAL_ADDRESS_COUNT:
             return None
         if should_ignore_logical_address(logical_address):
-            logger.warning('Discarding ghost scan result on logical address %X', logical_address)
+            logger.warning('Discarding ghost scan result on logical address %d', logical_address)
             return None
 
         addresses = self.lib.GetActiveDevices()
