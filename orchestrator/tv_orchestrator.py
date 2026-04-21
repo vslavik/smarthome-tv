@@ -296,6 +296,7 @@ class Orchestrator:
                 raise TypeError(f"unexpected event: {event!r}")
 
     def handle_cec_source_change(self, event: CecEvent) -> None:
+        logger.info(f"CEC source change: {event}")
         if event.device is None:
             self.state.active_source = None
         else:
@@ -304,6 +305,7 @@ class Orchestrator:
         self.publish_system_state()
 
     def handle_cec_power(self, event: CecEvent) -> None:
+        logger.info(f"CEC power change: {event.device}")
         dev = self.devices.match(event.device)
         if dev.power != event.device.power_status:
             dev.power = event.device.power_status
@@ -312,6 +314,8 @@ class Orchestrator:
     def handle_ps5_state(self, event: PS5StateEvent) -> None:
         if not self.devices.ps5:
             return
+
+        logger.info(f"PS5 state change (DDP): {event.state}")
         if event.state != self.devices.ps5.power:
             self.devices.ps5.power = event.state
             self.handle_power_change(self.devices.ps5)
@@ -320,6 +324,7 @@ class Orchestrator:
         if not self.devices.androidtv:
             return
 
+        logger.info(f"Android TV state change: {event}")
         if event.state != self.devices.androidtv.playback_state:
             if event.state and event.state != "unavailable":
                 self.devices.androidtv.playback_state = event.state
@@ -338,6 +343,7 @@ class Orchestrator:
         self.publish_device_state(device)
 
         if not device.is_on and device is self.state.active_source:
+            logger.info(f"active source {device.id} turned off; clearing active source")
             self.state.active_source = None
             self.publish_system_state()
 
