@@ -61,8 +61,10 @@ class AndroidTVState(msgspec.Struct, omit_defaults=True):
 def state_from_media_session(media_session_state: int | None) -> str | None:
     if media_session_state == MEDIA_SESSION_PAUSED:
         return "paused"
-    if media_session_state == MEDIA_SESSION_PLAYING:
+    elif media_session_state == MEDIA_SESSION_PLAYING:
         return "playback"
+    elif media_session_state == MEDIA_SESSION_STOPPED:
+        return "idle"
     return None
 
 
