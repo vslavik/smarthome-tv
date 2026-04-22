@@ -3,7 +3,6 @@ name: Build docker images
 
 on:
   push:
-    branches: ['main']
 
 env:
   REGISTRY: ghcr.io
@@ -12,7 +11,10 @@ env:
 
 jobs:
   build-docker-image:
+    if: github.ref_type == 'branch'
     runs-on: ubuntu-latest
+    env:
+      PUBLISH: ${{ github.ref_name == 'main' && 'true' || 'false' }}
     strategy:
       fail-fast: false
       matrix:
@@ -39,6 +41,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to the Container registry
+        if: env.PUBLISH == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -59,13 +62,14 @@ jobs:
         with:
           platforms: linux/amd64,linux/arm64
           context: ./${{ matrix.service }}
-          push: true
+          push: ${{ env.PUBLISH == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Delete old Docker images
+        if: env.PUBLISH == 'true'
         uses: actions/delete-package-versions@v5
         with:
           package-name: ${{ env.NAME_PREFIX }}-${{ matrix.service }}
