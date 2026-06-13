@@ -302,6 +302,7 @@ class Orchestrator:
         else:
             dev = self.devices.match(event.device)
             self.state.active_source = dev
+            self.start_aux_services(dev)
         self.publish_system_state()
 
     def handle_cec_power(self, event: CecEvent) -> None:
