@@ -171,7 +171,10 @@ class CECClient:
             case cec.CEC_OPCODE_INACTIVE_SOURCE:
                 self.on_become_inactive(message.source)
             case cec.CEC_OPCODE_STANDBY:
-                self.on_power_status(message.source, cec.CEC_POWER_STATUS_STANDBY)
+                # <Standby> is a command, not a notification. It instructs
+                # the destination to go to sleep.
+                # TODO: Schedule a power status check for the destination device in near future
+                pass
             case cec.CEC_OPCODE_REPORT_POWER_STATUS if message.parameters:
                 self.on_power_status(message.source, message.parameters[0])
 
