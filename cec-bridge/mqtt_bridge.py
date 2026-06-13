@@ -197,10 +197,11 @@ class CECClient:
 
         logger.info('Active source is now %s', self.device_label(device_id))
 
-        if device.power_status != 'on':
-            # becoming active implies being powered on
-            device.power_status = 'on'
-            self.publish_device_event(device, 'power')
+        # Inactive-source does not imply standby, so our cached power state can
+        # remain "on" across a real power-off. So we pragmatically choose to possibly
+        # re-publish power=on needlessly whenever a device becomes active.
+        device.power_status = 'on'
+        self.publish_device_event(device, 'power')
 
         self.publish(
             f'{MQTT_BASE_TOPIC}/active',
